@@ -10,9 +10,9 @@ __pycache__/
 venv/
 .venv/
 
-# Data files (large)
-data/*.csv
+# Data files (large) — except bootstrap data
 data/*.pkl
+# data/*.csv  # keeping CSV for teammates to clone
 
 # Models
 models/*.pkl
