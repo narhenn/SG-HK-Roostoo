@@ -239,8 +239,9 @@ class TradeExecutor:
         if order_status == "COMPLETED" or (filled_qty > 0 and filled_qty >= qty):
             return {"order_id": order_id, "qty": qty, "fill_price": avg_price or limit_price}
 
-        # Poll for fill
-        status = _poll_order(self.client, order_id, LIMIT_ORDER_TIMEOUT, sleep_seconds=10)
+        # Poll for fill (60s max, not 120s — keeps main loop responsive)
+        poll_timeout = min(LIMIT_ORDER_TIMEOUT, 60)
+        status = _poll_order(self.client, order_id, poll_timeout, sleep_seconds=5)
         if status["status"] == "FILLED":
             return {"order_id": order_id, "qty": qty, "fill_price": status["avg_price"] or limit_price}
 
@@ -270,8 +271,15 @@ class TradeExecutor:
             bid = parsed['bid'] if parsed['bid'] > 0 else current_bid
             limit_price = _entry_price_for_signal(bid, signal_source, self.price_precision)
             order = self.client.place_order(TRADING_PAIR, "BUY", "LIMIT", qty, limit_price)
-            order_id = order.get("OrderID")
-            status = _poll_order(self.client, order_id, LIMIT_ORDER_TIMEOUT, sleep_seconds=10)
+
+            detail = order.get("OrderDetail", order)
+            order_id = detail.get("OrderID") or order.get("OrderID")
+            filled_qty = float(detail.get("FilledQuantity", 0) or 0)
+            avg_price = float(detail.get("FilledAverPrice", 0) or 0)
+            if (detail.get("Status") or "").upper() == "COMPLETED" or filled_qty >= qty:
+                return {"order_id": order_id, "qty": qty, "fill_price": avg_price or limit_price}
+
+            status = _poll_order(self.client, order_id, poll_timeout, sleep_seconds=5)
             if status["status"] == "FILLED":
                 return {"order_id": order_id, "qty": qty, "fill_price": status["avg_price"] or limit_price}
             self.client.cancel_order(order_id)
@@ -394,25 +402,31 @@ class TradeExecutor:
     def start_stop_monitor(self, atr_14: float, regime: str):
         def _loop():
             while True:
+                # Check if position is still open (quick lock)
                 with self.lock:
                     if not self.state.get("exec_position_open"):
                         return
-
-                    try:
-                        raw_ticker = self.client.get_ticker(TRADING_PAIR)
-                        parsed = _parse_ticker(raw_ticker)
-                        current_price = parsed['price']
-                        current_bid = parsed['bid'] if parsed['bid'] > 0 else current_price
-                    except Exception:
-                        time.sleep(10)
-                        continue
-
-                    if current_price <= 0:
-                        time.sleep(10)
-                        continue
-
                     entry = self.state.get("exec_entry_price", 0.0)
                     current_stop = self.state.get("exec_stop", 0.0)
+
+                # API call OUTSIDE lock — doesn't block main thread
+                try:
+                    raw_ticker = self.client.get_ticker(TRADING_PAIR)
+                    parsed = _parse_ticker(raw_ticker)
+                    current_price = parsed['price']
+                    current_bid = parsed['bid'] if parsed['bid'] > 0 else current_price
+                except Exception:
+                    time.sleep(10)
+                    continue
+
+                if current_price <= 0:
+                    time.sleep(10)
+                    continue
+
+                # Evaluate and update state (quick lock)
+                with self.lock:
+                    if not self.state.get("exec_position_open"):
+                        return
 
                     reason, new_stop, tp = self._evaluate_trailing(
                         entry, current_price, atr_14, regime, current_stop
@@ -436,18 +450,25 @@ class TradeExecutor:
     def execute_trade(self, final_position_size_usd: float, current_btc_price: float,
                       current_bid: float, current_ask: float, atr_14: float, regime: str,
                       signal_source: str, entry_context: dict):
+        # Quick lock check for cooldown/position, then release for API calls
         with self.lock:
             if _cooldown_active(self.state):
                 self._log_event("In post-stop cooldown. Skipping signal.")
                 return
-
-            entry = self._enter_position(
-                final_position_size_usd, current_bid, current_btc_price, signal_source
-            )
-            if not entry:
-                self._save()
+            if self.state.get("exec_position_open"):
+                self._log_event("BUY signal ignored: position already open")
                 return
 
+        # Order placement happens OUTSIDE lock — doesn't block stop monitor
+        entry = self._enter_position(
+            final_position_size_usd, current_bid, current_btc_price, signal_source
+        )
+        if not entry:
+            with self.lock:
+                self._save()
+            return
+
+        with self.lock:
             # Save entry details in shared state
             self.state["exec_position_open"] = True
             self.state["exec_btc_qty"] = entry["qty"]
