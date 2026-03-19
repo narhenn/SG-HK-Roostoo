@@ -189,11 +189,15 @@ class RoostooClient:
     def get_price(self, pair: str) -> float:
         """Get current last price for a pair."""
         ticker = self.get_ticker(pair)
-        # Handle different possible response formats
         if isinstance(ticker, dict):
+            # Direct format
             if "LastPrice" in ticker:
                 return float(ticker["LastPrice"])
-            # If response is nested under pair name
+            # Nested under 'Data' -> pair
+            data = ticker.get("Data")
+            if isinstance(data, dict) and pair in data:
+                return float(data[pair]["LastPrice"])
+            # Nested under pair name directly
             if pair in ticker:
                 return float(ticker[pair]["LastPrice"])
         return 0.0

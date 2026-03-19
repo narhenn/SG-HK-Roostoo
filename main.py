@@ -117,7 +117,12 @@ class TradingBot:
 
         # ── Fetch current price ──
         try:
-            ticker = self.client.get_ticker(TRADING_PAIR)
+            raw_ticker = self.client.get_ticker(TRADING_PAIR)
+            # Roostoo nests data under 'Data' -> pair name
+            if isinstance(raw_ticker, dict) and 'Data' in raw_ticker:
+                ticker = raw_ticker['Data'].get(TRADING_PAIR, {})
+            else:
+                ticker = raw_ticker
             price = float(ticker.get('LastPrice', 0))
             bid = float(ticker.get('MaxBid', 0))
             ask = float(ticker.get('MinAsk', 0))
