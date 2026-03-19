@@ -107,24 +107,22 @@ def _poll_order(client, order_id: str, timeout_seconds: int, sleep_seconds: int 
     last = {"status": "NEW", "filled_qty": 0.0, "avg_price": 0.0}
     while time.time() < deadline:
         try:
-            resp = client.query_orders(pair=TRADING_PAIR, pending_only=False)
-            orders_list = resp.get('Data', []) if isinstance(resp, dict) else []
-            if isinstance(orders_list, dict):
-                # Sometimes nested under pair key
-                for v in orders_list.values():
-                    if isinstance(v, list):
-                        orders_list = v
-                        break
+            resp = client.query_orders(pair=TRADING_PAIR)
+            # Roostoo returns: {'OrderMatched': [{'OrderID': ..., 'Status': ..., ...}]}
+            orders_list = resp.get('OrderMatched', []) if isinstance(resp, dict) else []
             if isinstance(orders_list, list):
                 for row in orders_list:
                     if str(row.get("OrderID")) == str(order_id):
-                        last = {
-                            "status": (row.get("Status") or "").upper(),
-                            "filled_qty": float(row.get("FilledQty", 0) or 0),
-                            "avg_price": float(row.get("AvgPrice", 0) or 0),
-                        }
-                        if last["status"] in {"FILLED", "PARTIALLY_FILLED"}:
-                            return last
+                        status_raw = (row.get("Status") or "").upper()
+                        filled_qty = float(row.get("FilledQuantity", 0) or 0)
+                        avg_price = float(row.get("FilledAverPrice", 0) or 0)
+                        ordered_qty = float(row.get("Quantity", 0) or 0)
+                        # Roostoo uses PENDING/COMPLETED/CANCELLED
+                        if status_raw == "COMPLETED" or (ordered_qty > 0 and filled_qty >= ordered_qty):
+                            return {"status": "FILLED", "filled_qty": filled_qty, "avg_price": avg_price}
+                        elif filled_qty > 0 and filled_qty < ordered_qty:
+                            return {"status": "PARTIALLY_FILLED", "filled_qty": filled_qty, "avg_price": avg_price}
+                        last = {"status": status_raw, "filled_qty": filled_qty, "avg_price": avg_price}
         except Exception:
             pass
         time.sleep(sleep_seconds)
@@ -229,8 +227,19 @@ class TradeExecutor:
         except Exception as e:
             self._log_event(f"Order placement failed: {e}")
             return None
-        order_id = order.get("OrderID")
 
+        # Roostoo returns OrderDetail with fill info in place_order response
+        detail = order.get("OrderDetail", order)
+        order_id = detail.get("OrderID") or order.get("OrderID")
+        filled_qty = float(detail.get("FilledQuantity", 0) or 0)
+        avg_price = float(detail.get("FilledAverPrice", 0) or 0)
+        order_status = (detail.get("Status") or "").upper()
+
+        # Check if immediately filled
+        if order_status == "COMPLETED" or (filled_qty > 0 and filled_qty >= qty):
+            return {"order_id": order_id, "qty": qty, "fill_price": avg_price or limit_price}
+
+        # Poll for fill
         status = _poll_order(self.client, order_id, LIMIT_ORDER_TIMEOUT, sleep_seconds=10)
         if status["status"] == "FILLED":
             return {"order_id": order_id, "qty": qty, "fill_price": status["avg_price"] or limit_price}

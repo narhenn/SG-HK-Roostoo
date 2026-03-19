@@ -227,6 +227,10 @@ def _drawdown_cap(
     # Example: (1,000,000 - 975,000) / 1,000,000 = 0.025 (2.5%)
     drawdown_pct = (peak_capital - current_capital) / peak_capital
 
+    # Reset halt flag if drawdown recovered
+    if drawdown_pct < DRAWDOWN_LEVEL_3:
+        state.pop("_dd_8pct_halted", None)
+
     # 1) Drawdown < 2% (DRAWDOWN_LEVEL_1 = 0.02)
     # We are healthy; no cap.
     if drawdown_pct < DRAWDOWN_LEVEL_1:
@@ -250,13 +254,15 @@ def _drawdown_cap(
         return 0.15 * current_capital, True
 
     # 4) 8% to <10% drawdown
-    # We halt for 4 hours (HALT_HOURS) and then cap at 10% after halt.
+    # First time: halt for 4 hours. After halt expires: allow at 10% cap.
+    # Track whether we already halted for this drawdown level.
     if DRAWDOWN_LEVEL_3 <= drawdown_pct < DRAWDOWN_LEVEL_4:
-        # If we are not already halted, set a halt timer for 4 hours.
-        if not _is_halted(state):
+        if not state.get("_dd_8pct_halted"):
+            # First time hitting 8% — halt for 4 hours
             _set_halt(state, HALT_HOURS)
+            state["_dd_8pct_halted"] = True
             return 0.0, False
-        # After halt expires, cap at 10% of current capital.
+        # Already halted once for this level — allow at 10% cap
         return 0.10 * current_capital, True
 
     # 5) Drawdown >= 10%
@@ -424,12 +430,15 @@ def compute_position_size(
     # If either condition is triggered, we close positions and halt for 24 hours.
     if drawdown_pct > DRAWDOWN_KILL or rolling_sharpe_3day < SHARPE_KILL:
         if close_all_positions_fn is not None:
-            # Ask the exchange to close all positions immediately.
             close_all_positions_fn()
-        # Set a 24-hour halt to prevent immediate re-entry.
         _set_halt(state, KILL_HALT_HOURS)
-        # Save the state to disk for crash safety.
         _save_state(state, save_state_fn)
+        # Send Telegram alert
+        try:
+            from execution.alerts import alert_kill_switch
+            alert_kill_switch(drawdown_pct, rolling_sharpe_3day, current_capital)
+        except Exception:
+            pass
         return 0.0
 
     # If the bot is currently halted, do not trade.

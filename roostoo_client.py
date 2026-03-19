@@ -138,13 +138,9 @@ class RoostooClient:
         """Query order history."""
         params = {
             "timestamp": self._timestamp(),
-            "offset": "0",
-            "limit": str(limit),
         }
         if pair:
             params["pair"] = pair
-        if pending_only:
-            params["pending_only"] = "true"
 
         headers = self._headers(params)
         headers["Content-Type"] = "application/x-www-form-urlencoded"

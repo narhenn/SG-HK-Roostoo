@@ -30,7 +30,7 @@ class FakeClient:
         self.counter += 1
         order_id = str(self.counter)
         self.orders[order_id] = {"qty": qty, "price": price, "side": side}
-        return {"OrderID": order_id}
+        return {"OrderDetail": {"OrderID": order_id, "Status": "PENDING", "FilledQuantity": 0, "FilledAverPrice": 0, "Quantity": qty}}
 
     def cancel_order(self, order_id):
         return {"OrderID": order_id}
@@ -39,8 +39,8 @@ class FakeClient:
         if self.fill_status:
             status = self.fill_status.pop(0)
         else:
-            status = {"OrderID": "1", "Status": "FILLED", "FilledQty": 1.0, "AvgPrice": 80010}
-        return {"Data": [status]}
+            status = {"OrderID": "1", "Status": "COMPLETED", "Quantity": 1.0, "FilledQuantity": 1.0, "FilledAverPrice": 80010}
+        return {"OrderMatched": [status]}
 
     def get_ticker(self, pair=None):
         return self.ticker
@@ -184,7 +184,7 @@ def test_full_integration_simulation():
     saved = []
     client = FakeClient()
     client.fill_status = [
-        {"OrderID": "1", "Status": "FILLED", "FilledQty": 1.04138, "AvgPrice": 80010},
+        {"OrderID": "1", "Status": "COMPLETED", "Quantity": 1.04138, "FilledQuantity": 1.04138, "FilledAverPrice": 80010},
     ]
     ex = TradeExecutor(client, 2, 5, state=state, save_state_fn=lambda s: saved.append(True))
     ex.execute_trade(

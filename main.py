@@ -17,6 +17,7 @@ Flow every 60 seconds:
 import time
 import logging
 import os
+import statistics
 from datetime import datetime
 
 from config import (
@@ -251,6 +252,16 @@ class TradingBot:
             log.info(f"Cycle {cycle}: SELL signal but no position. Ignoring.")
             return
 
+        # SELL signals skip L3/L4/L5/L6 — exit immediately
+        # If price is dumping, L3 would block exit ("extreme move >2%")
+        if direction == 'SELL' and self.has_position():
+            log.info(
+                f"Cycle {cycle}: EXECUTING SELL | "
+                f"Regime={regime} | Source={source} | Price=${price:.2f}"
+            )
+            self.executor.execute_sell(bid, reason=f"L2_{source}")
+            return
+
         # S2: One position at a time
         if direction == 'BUY' and self.has_position():
             log.info(f"Cycle {cycle}: BUY signal but already in position. Skipping.")
@@ -326,19 +337,9 @@ class TradingBot:
         recent_trades = trade_history[-20:] if trade_history else []
         if len(recent_trades) >= 3:
             returns = [t.get('pnl_pct', 0) for t in recent_trades]
-            import statistics
             mean_ret = statistics.mean(returns)
             std_ret = statistics.stdev(returns) if len(returns) > 1 else 1.0
             rolling_sharpe = mean_ret / std_ret if std_ret > 0 else 0.0
-
-        # SELL signals go straight to executor (no sizing needed)
-        if direction == 'SELL':
-            log.info(
-                f"Cycle {cycle}: EXECUTING SELL | "
-                f"Regime={regime} | Source={source} | Price=${price:.2f}"
-            )
-            self.executor.execute_sell(bid, reason=f"L2_{source}")
-            return
 
         size_usd = compute_position_size(
             current_capital=equity,
@@ -432,6 +433,15 @@ class TradingBot:
         df_1h = self.candles.get_df('1h')
         regime = detect_regime(df_1h) if len(df_1h) > 55 else 'UNKNOWN'
         alert_startup(self.state.get('current_equity', STARTING_CAPITAL), regime, len(df_1h))
+
+        # Recover open position: restart stop monitor if we were holding BTC
+        if self.state.get('exec_position_open'):
+            atr_series = calculate_atr(df_1h)
+            atr_14 = float(atr_series.iloc[-1]) if len(df_1h) > 20 and not atr_series.empty else 1000.0
+            entry_regime = self.state.get('exec_regime', regime)
+            log.info(f"Recovering open position: restarting stop monitor (regime={entry_regime})")
+            send_alert(f"<b>POSITION RECOVERED</b>\nRestarting stop monitor for open position")
+            self.executor.start_stop_monitor(atr_14, entry_regime)
 
         while self.running:
             try:
