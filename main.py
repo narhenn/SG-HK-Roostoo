@@ -367,10 +367,23 @@ class TradingBot:
         # Bootstrap with historical data
         self.bootstrap()
 
-        # Test connection
+        # Test connection and sync equity from API
         try:
             server_time = self.client.get_server_time()
             log.info(f"Connected to Roostoo. Server time: {server_time}")
+
+            # Fetch real balance from Roostoo API
+            balance = self.client.get_balance()
+            balance_data = balance.get('Data', balance)
+            usd_free = 0.0
+            if isinstance(balance_data, dict):
+                usd_info = balance_data.get('USD', {})
+                usd_free = float(usd_info.get('Free', 0))
+            if usd_free > 0:
+                self.state['current_equity'] = usd_free
+                self.state['peak_equity'] = max(self.state.get('peak_equity', 0), usd_free)
+                log.info(f"Synced equity from API: ${usd_free:,.0f}")
+                save_state(self.state)
         except Exception as e:
             log.error(f"Cannot connect to Roostoo API: {e}")
             alert_error(f"Cannot connect to Roostoo API: {e}")
@@ -379,7 +392,7 @@ class TradingBot:
         # Startup alert
         df_1h = self.candles.get_df('1h')
         regime = detect_regime(df_1h) if len(df_1h) > 55 else 'UNKNOWN'
-        alert_startup(self.state.get('current_equity', 50000), regime, len(df_1h))
+        alert_startup(self.state.get('current_equity', STARTING_CAPITAL), regime, len(df_1h))
 
         while self.running:
             try:
