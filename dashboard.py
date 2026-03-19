@@ -1,5 +1,5 @@
 """
-Live Dashboard — Simple web UI showing bot status.
+Live Dashboard -Simple web UI showing bot status.
 Reads from state.json and log files. Auto-refreshes every 30 seconds.
 
 Run: python3 dashboard.py
@@ -14,7 +14,13 @@ from datetime import datetime
 
 from data.fetchers import fetch_fear_greed, fetch_market_breadth, get_order_precision
 from roostoo_client import RoostooClient
+from data.candle_builder import CandleBuilder
+from strategy.regime import detect_regime
 from config import TRADING_PAIR, STATE_FILE
+
+# Global candle builder for regime detection
+_candles = CandleBuilder()
+_candles.bootstrap()
 
 
 def load_state():
@@ -111,6 +117,24 @@ def build_html():
     except:
         breadth = 0.5
 
+    # Regime detection
+    try:
+        df_1h = _candles.get_df('1h')
+        if len(df_1h) > 55:
+            regime = detect_regime(df_1h, fg, 0.0, breadth)
+        else:
+            regime = "LOADING"
+    except:
+        regime = "UNKNOWN"
+
+    regime_colors = {
+        'TRENDING': '#2196F3',
+        'SIDEWAYS': '#FF9800',
+        'VOLATILE': '#F44336',
+        'LOADING': '#9E9E9E',
+        'UNKNOWN': '#9E9E9E',
+    }
+
     # Position info
     if positions:
         pos = positions[0]
@@ -145,7 +169,7 @@ def build_html():
         position_html = """
         <div class="card">
             <h3>Open Position</h3>
-            <p style="color: #9E9E9E; text-align: center; padding: 20px;">No open position — waiting for signal</p>
+            <p style="color: #9E9E9E; text-align: center; padding: 20px;">No open position -waiting for signal</p>
         </div>
         """
 
@@ -215,6 +239,7 @@ def build_html():
     html = f"""<!DOCTYPE html>
 <html>
 <head>
+    <meta charset="UTF-8">
     <title>QuantX Trading Dashboard</title>
     <meta http-equiv="refresh" content="30">
     <style>
@@ -286,7 +311,7 @@ def build_html():
             <h3>Market Signals</h3>
             <div class="stat-row">
                 <span>Fear & Greed</span>
-                <span><span class="indicator" style="background: {fg_color}; color: #fff">{fg} — {fg_label}</span></span>
+                <span><span class="indicator" style="background: {fg_color}; color: #fff">{fg} -{fg_label}</span></span>
             </div>
             <div class="stat-row">
                 <span>Market Breadth</span>
@@ -294,7 +319,7 @@ def build_html():
             </div>
             <div class="stat-row">
                 <span>Regime</span>
-                <span class="indicator" style="background: #333; color: #fff">From bot logs</span>
+                <span class="indicator" style="background: {regime_colors.get(regime, '#9E9E9E')}; color: #fff">{regime}</span>
             </div>
         </div>
 
