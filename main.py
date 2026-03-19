@@ -26,8 +26,8 @@ from config import (
 from roostoo_client import RoostooClient
 from data.candle_builder import CandleBuilder
 from data.state import save_state, load_state, default_state
-from data.fetchers import fetch_fear_greed, fetch_funding_rate, fetch_market_breadth
-from strategy.regime import detect_regime
+from data.fetchers import fetch_fear_greed, fetch_funding_rate, fetch_market_breadth, get_order_precision
+from strategy.regime import detect_regime, calculate_atr
 from strategy.signals import generate_signal
 from strategy.reversal_blocker import check_reversal_block
 from strategy.timeframe import check_timeframe
@@ -41,8 +41,9 @@ try:
 except Exception as e:
     _USE_PRANATI_MODEL = False
     print(f"[WARN] Pranati's model not available, using stub: {e}")
-from risk.position_sizer import calculate_position
-from execution.executor import execute_trade
+
+from risk.position_sizer import compute_position_size
+from execution.executor import TradeExecutor
 from execution.alerts import (
     alert_trade, alert_stop_loss, alert_startup,
     alert_drawdown, alert_kill_switch, alert_error, alert_daily_summary,
@@ -68,6 +69,13 @@ class TradingBot:
         self.candles = CandleBuilder()
         self.state = load_state() or default_state()
         self.running = False
+
+        precision = get_order_precision(self.client)
+        self.executor = TradeExecutor(
+            self.client,
+            price_precision=precision.get('price_precision', 2),
+            amount_precision=precision.get('amount_precision', 5),
+        )
 
         # External data (refreshed periodically)
         self.fear_greed = 50
@@ -175,6 +183,9 @@ class TradingBot:
 
     def has_position(self) -> bool:
         """Check if we currently hold BTC (S2: one position at a time)."""
+        executor_state = getattr(self, 'executor', None)
+        if executor_state and hasattr(self.executor, 'state'):
+            return bool(self.executor.state.get('position_open'))
         return len(self.state.get('positions', [])) > 0
 
     def run_cycle(self):
@@ -305,16 +316,31 @@ class TradingBot:
         equity = self.state.get('current_equity', STARTING_CAPITAL)
         trade_history = self.state.get('trade_history', [])
 
-        pos_result = calculate_position(
-            equity, regime, tf_result['multiplier'], xgb_prob, trade_history
+        # Estimate stop distance for sizing (default 3% of price)
+        est_stop_distance = price * 0.03
+
+        atr_series = calculate_atr(df_1h)
+        atr_14 = float(atr_series.iloc[-1]) if not atr_series.empty else est_stop_distance
+
+        size_usd = compute_position_size(
+            current_capital=equity,
+            peak_capital=self.state.get('peak_equity', equity),
+            trade_history=trade_history,
+            regime=regime,
+            timeframe_score=tf_result['score'],
+            signal_score=xgb_prob * 100,
+            atr_usd=atr_14,
+            btc_price=price,
+            current_position_open=self.has_position(),
+            rolling_sharpe_3day=0.0,
+            timeframe_4h_bullish=tf_result['scores'].get('4h') == 1,
+            state=self.state,
+            save_state_fn=save_state,
         )
 
-        if not pos_result['can_trade']:
-            log.info(f"Cycle {cycle}: BLOCKED by position sizer: {pos_result['reason']}")
+        if size_usd <= 0:
+            log.info(f"Cycle {cycle}: BLOCKED by position sizer (size=0)")
             return
-
-        size_usd = pos_result['size_usd']
-        size_btc = size_usd / price
 
         # ══════════════════════════════════════════
         # LAYER 7: EXECUTE
@@ -322,37 +348,31 @@ class TradingBot:
         log.info(
             f"Cycle {cycle}: EXECUTING {direction} | "
             f"Regime={regime} | TF_score={tf_result['score']} | "
-            f"XGB={xgb_prob:.3f} | Size=${size_usd:.0f} ({size_btc:.6f} BTC) | "
+            f"XGB={xgb_prob:.3f} | Size=${size_usd:.0f} | "
             f"Source={source} | Price=${price:.2f}"
         )
 
-        exec_result = execute_trade(
-            self.client, direction, size_btc, price,
-            stop_level=price * 0.97,  # Default stop, Kireeti will improve
-            signal_source=source,
-        )
+        signal_source = "DONCHIAN_BREAKOUT" if "donchian" in source or "breakout" in source else "MEAN_REVERSION"
+        entry_context = {
+            "reversal_blocker_result": "PASSED",
+            "xgboost_probability": xgb_prob,
+            "timeframe_scores": {"1H": tf_result['scores'].get('1h'), "4H": tf_result['scores'].get('4h'), "Daily": tf_result['scores'].get('daily')},
+            "timeframe_total_score": tf_result['score'],
+        }
 
-        if exec_result['filled']:
-            # Track position
-            if direction == 'BUY':
-                self.state['positions'].append({
-                    'order_id': exec_result['order_id'],
-                    'entry_price': exec_result['fill_price'],
-                    'quantity': exec_result['fill_qty'],
-                    'entry_time': datetime.utcnow().isoformat(),
-                })
-            elif direction == 'SELL':
-                # Close position, record trade
-                self.state['positions'] = []
+        if direction == 'BUY':
+            self.executor.execute_trade(
+                final_position_size_usd=size_usd,
+                current_btc_price=price,
+                current_bid=bid,
+                current_ask=ask,
+                atr_14=atr_14,
+                regime=regime,
+                signal_source=signal_source,
+                entry_context=entry_context,
+            )
 
-            log.info(f"Cycle {cycle}: Order filled. ID={exec_result['order_id']}")
-            alert_trade(direction, price, size_usd, regime, source,
-                       tf_result['score'], xgb_prob)
-        else:
-            log.warning(f"Cycle {cycle}: Order NOT filled. {exec_result.get('error', '')}")
-
-        # Save state after every trade
-        save_state(self.state)
+        # Layer 7 executor owns execution, state updates, and logging.
 
     def run(self):
         """Main loop. Runs until stopped."""

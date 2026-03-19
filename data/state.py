@@ -5,13 +5,13 @@ Owner: Narhen
 
 import json
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from config import STATE_FILE, STARTING_CAPITAL
 
 
 def save_state(state: dict):
     """Save bot state to JSON file."""
-    state['last_saved'] = datetime.utcnow().isoformat()
+    state['last_saved'] = datetime.now(timezone.utc).isoformat()
     try:
         with open(STATE_FILE, 'w') as f:
             json.dump(state, f, indent=2, default=str)
@@ -42,5 +42,5 @@ def default_state() -> dict:
         'cooldown_until': None,      # Timestamp when cooldown expires
         'blocker_until': None,       # Reversal blocker cooldown
         'cycle_count': 0,
-        'start_time': datetime.utcnow().isoformat(),
+        'start_time': datetime.now(timezone.utc).isoformat(),
     }

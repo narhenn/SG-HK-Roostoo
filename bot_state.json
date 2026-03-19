@@ -1,0 +1,29 @@
+{
+  "position_open": true,
+  "position_btc_qty": 1.04125,
+  "entry_price": 80010.0,
+  "current_stop": 79260.0,
+  "position_open_time": "2026-03-19T11:33:38.343085+00:00",
+  "regime_at_entry": "TRENDING",
+  "current_capital": 1000000.0,
+  "peak_portfolio_value": 1000000.0,
+  "cooldown_until": null,
+  "halt_until": null,
+  "trade_history": [],
+  "drawdown_alerts_fired": {
+    "2pct": false,
+    "5pct": false,
+    "8pct": false
+  },
+  "signal_source": "DONCHIAN_BREAKOUT",
+  "position_size_usd": 83300,
+  "take_profit_level": null,
+  "reversal_blocker_result": "PASSED",
+  "xgboost_probability": 0.73,
+  "timeframe_scores": {
+    "1H": 1,
+    "4H": 1,
+    "Daily": 1
+  },
+  "timeframe_total_score": 3
+}
