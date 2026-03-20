@@ -243,6 +243,14 @@ class CandleBuilder:
             if self.ticks and not self.df_1h.empty:
                 live = self._live_candle()
                 if not live.empty:
+                    live_close = float(live['close'].iloc[0])
+                    base_close = float(self.df_1h['close'].iloc[-1])
+                    log.info(
+                        f"Live candle: close=${live_close:,.0f} "
+                        f"(bootstrap end=${base_close:,.0f}, "
+                        f"ticks={len(self.ticks)}, "
+                        f"remainder={len(self.ticks) % 60})"
+                    )
                     return pd.concat([self.df_1h, live], ignore_index=True)
             return self.df_1h
         elif timeframe == '4h':
