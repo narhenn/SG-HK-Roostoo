@@ -20,6 +20,7 @@ ORDER_TYPE = "LIMIT"
 TRADE_INTERVAL_SECONDS = 60           # Main loop interval
 STOP_MONITOR_INTERVAL = 15            # Trailing stop check interval (seconds)
 STARTING_CAPITAL = 50_000             # Roostoo gives $50K, not $1M
+COMPETITION_CAPITAL = 50_000          # Update this once competition account is confirmed
 BTC_PRICE_PRECISION = 2               # From exchangeInfo
 BTC_AMOUNT_PRECISION = 5              # From exchangeInfo
 BTC_MIN_ORDER = 1                     # Minimum order amount
