@@ -22,11 +22,12 @@ STOP_MONITOR_INTERVAL = 15            # Trailing stop check interval (seconds)
 # ══════════════════════════════════════════
 # MARCH 21 CHECKLIST — DO BEFORE 00:00 SGT
 # 1. Swap API keys in config_secrets.py to competition keys
-# 2. Change STARTING_CAPITAL to 1_000_000
-# 3. sudo systemctl restart bot.service
+# 2. Change STARTING_CAPITAL to 1_000_000 (CONFIRMED: competition = $1M)
+# 3. Delete state.json on EC2: rm -f state.json
+# 4. sudo systemctl restart bot.service
 # ══════════════════════════════════════════
 STARTING_CAPITAL = 50_000             # Testing account. Change to 1_000_000 on Mar 21.
-COMPETITION_CAPITAL = 50_000          # Update this once competition account is confirmed
+COMPETITION_CAPITAL = 1_000_000       # CONFIRMED via API: competition account is $1M
 BTC_PRICE_PRECISION = 2               # From exchangeInfo
 BTC_AMOUNT_PRECISION = 5              # From exchangeInfo
 BTC_MIN_ORDER = 1                     # Minimum order amount
@@ -96,7 +97,7 @@ KILL_HALT_HOURS = 24               # Hours to halt after kill switch
 LIMIT_ORDER_TIMEOUT = 120          # Cancel unfilled limit after 2 min (seconds)
 BREAKOUT_AGGRESSIVE_OFFSET = 0.0002  # bid + 0.02% for breakout entries
 ATR_STOP_MULTIPLIER = 1.5          # Trailing stop = 1.5x ATR below peak
-TIME_EXIT_HOURS = 8                # Close flat positions after 8 hours
+TIME_EXIT_HOURS = 4                # Close flat positions after 4 hours (faster turnover)
 FLAT_THRESHOLD = 0.002             # <0.2% P&L = "flat"
 COOLDOWN_AFTER_STOP = 3600         # 1 hour cooldown after stop-loss (seconds)
 PARTIAL_FILL_THRESHOLD = 0.5       # >50% filled = keep, <50% = sell back

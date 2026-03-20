@@ -112,7 +112,7 @@ def test_component3_time_exit_logic():
     _print_result("COMP3 TEST2", False, not passed, passed)
     assert passed
 
-    ex.state["exec_open_time"] = (datetime.now(timezone.utc) - timedelta(hours=5)).isoformat()
+    ex.state["exec_open_time"] = (datetime.now(timezone.utc) - timedelta(hours=3)).isoformat()
     passed = not ex._should_time_exit(80_000, 80_000)
     _print_result("COMP3 TEST3", False, not passed, passed)
     assert passed

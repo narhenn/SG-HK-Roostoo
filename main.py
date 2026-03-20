@@ -25,6 +25,7 @@ from config import (
     XGBOOST_MIN_PROBABILITY, LOGS_DIR, STARTING_CAPITAL,
     PROTECT_DAYS_BEFORE_END, RSI_OVERSOLD,
     ADX_TREND_THRESHOLD, ADX_NOTREND_THRESHOLD,
+    CONSERVATIVE_DAYS,
 )
 from roostoo_client import RoostooClient
 from data.candle_builder import CandleBuilder
@@ -147,15 +148,23 @@ class TradingBot:
         pos_status = "IN POSITION" if positions else "CASH"
 
         df_1h = self.candles.get_df('1h')
-        regime = detect_regime(df_1h, self.fear_greed, self.funding_rate, self.breadth) if len(df_1h) > 55 else 'UNKNOWN'
+        regime = detect_regime(self.candles.df_1h, self.fear_greed, self.funding_rate, self.breadth) if len(df_1h) > 55 else 'UNKNOWN'
 
-        price = self.candles.get_current_price()
+        # Use live Roostoo price, not bootstrap
+        try:
+            raw_t = self.client.get_ticker(TRADING_PAIR)
+            if isinstance(raw_t, dict) and 'Data' in raw_t:
+                hb_price = float(raw_t['Data'].get(TRADING_PAIR, {}).get('LastPrice', 0))
+            else:
+                hb_price = self.candles.get_current_price()
+        except Exception:
+            hb_price = self.candles.get_current_price()
 
         send_alert(
             f"<b>HEARTBEAT</b>\n"
             f"Bot is alive and running\n"
             f"Cycle: #{cycle}\n"
-            f"BTC: ${price:,.2f}\n"
+            f"BTC: ${hb_price:,.2f}\n"
             f"Equity: ${equity:,.0f}\n"
             f"Status: {pos_status}\n"
             f"Regime: {regime}\n"
@@ -454,6 +463,13 @@ class TradingBot:
             state=self.state,
             save_state_fn=save_state,
         )
+
+        # Conservative mode: first 2 days, halve position size
+        competition_start = datetime(2026, 3, 21)
+        days_in = (datetime.utcnow() - competition_start).total_seconds() / 86400
+        if 0 < days_in <= CONSERVATIVE_DAYS:
+            size_usd *= 0.5
+            log.info(f"Cycle {cycle}: CONSERVATIVE MODE — day {days_in:.1f}, size halved to ${size_usd:.0f}")
 
         log.info(
             f"Cycle {cycle}: L6 {'PASS' if size_usd > 0 else 'BLOCKED'} | "

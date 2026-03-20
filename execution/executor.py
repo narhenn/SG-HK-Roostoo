@@ -124,8 +124,8 @@ def _poll_order(client, order_id: str, timeout_seconds: int, sleep_seconds: int 
                         filled_qty = float(row.get("FilledQuantity", 0) or 0)
                         avg_price = float(row.get("FilledAverPrice", 0) or 0)
                         ordered_qty = float(row.get("Quantity", 0) or 0)
-                        # Roostoo uses PENDING/COMPLETED/CANCELLED
-                        if status_raw == "COMPLETED" or (ordered_qty > 0 and filled_qty >= ordered_qty):
+                        # Roostoo uses PENDING/FILLED/CANCELED
+                        if status_raw == "FILLED" or status_raw == "COMPLETED" or (ordered_qty > 0 and filled_qty >= ordered_qty):
                             return {"status": "FILLED", "filled_qty": filled_qty, "avg_price": avg_price}
                         elif filled_qty > 0 and filled_qty < ordered_qty:
                             return {"status": "PARTIALLY_FILLED", "filled_qty": filled_qty, "avg_price": avg_price}
@@ -241,9 +241,15 @@ class TradeExecutor:
         filled_qty = float(detail.get("FilledQuantity", 0) or 0)
         avg_price = float(detail.get("FilledAverPrice", 0) or 0)
         order_status = (detail.get("Status") or "").upper()
+        _log_event(f"BUY order placed", {
+            "order_id": order_id, "status": order_status,
+            "qty": qty, "price": limit_price,
+            "filled": filled_qty, "fill_price": avg_price,
+            "success": order.get("Success"),
+        })
 
-        # Check if immediately filled
-        if order_status == "COMPLETED" or (filled_qty > 0 and filled_qty >= qty):
+        # Check if immediately filled (Roostoo returns FILLED instantly for taker orders)
+        if order_status in ("FILLED", "COMPLETED") or (filled_qty > 0 and filled_qty >= qty):
             return {"order_id": order_id, "qty": qty, "fill_price": avg_price or limit_price}
 
         # Poll for fill (60s max, not 120s — keeps main loop responsive)
@@ -284,7 +290,7 @@ class TradeExecutor:
             order_id = detail.get("OrderID") or order.get("OrderID")
             filled_qty = float(detail.get("FilledQuantity", 0) or 0)
             avg_price = float(detail.get("FilledAverPrice", 0) or 0)
-            if (detail.get("Status") or "").upper() == "COMPLETED" or filled_qty >= qty:
+            if (detail.get("Status") or "").upper() in ("FILLED", "COMPLETED") or filled_qty >= qty:
                 return {"order_id": order_id, "qty": qty, "fill_price": avg_price or limit_price}
 
             status = _poll_order(self.client, order_id, poll_timeout, sleep_seconds=5)
