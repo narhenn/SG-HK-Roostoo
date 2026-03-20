@@ -3,8 +3,10 @@ Candle Builder: Stores tick data and aggregates into 1H, 4H, Daily candles.
 Owner: Narhen
 
 Also handles cold start bootstrap from Binance CSV.
+Ticks are persisted to disk so restarts don't wipe candle history.
 """
 
+import json
 import os
 import logging
 import pandas as pd
@@ -18,6 +20,59 @@ log = logging.getLogger(__name__)
 # Set to False after 20+ live Roostoo 1H candles are appended.
 BOOTSTRAP_DOMINANT = True
 
+TICK_CACHE_FILE = "data/ticks_cache.jsonl"
+TICK_CACHE_MAX = 2000
+
+
+def _load_tick_cache() -> list:
+    """Load cached ticks from disk."""
+    if not os.path.exists(TICK_CACHE_FILE):
+        return []
+    ticks = []
+    try:
+        with open(TICK_CACHE_FILE, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    t = json.loads(line)
+                    t['timestamp'] = datetime.fromisoformat(t['timestamp'])
+                    ticks.append(t)
+    except Exception:
+        log.exception("Failed to load tick cache")
+        return []
+    return ticks
+
+
+def _append_tick_to_cache(tick: dict):
+    """Append one tick to the cache file."""
+    try:
+        record = {
+            'timestamp': tick['timestamp'].isoformat(),
+            'price': tick['price'],
+            'volume': tick.get('volume', 0),
+            'bid': tick.get('bid', 0),
+            'ask': tick.get('ask', 0),
+            'spread': tick.get('spread', 0),
+        }
+        with open(TICK_CACHE_FILE, 'a') as f:
+            f.write(json.dumps(record) + '\n')
+    except Exception:
+        log.exception("Failed to append tick to cache")
+
+
+def _truncate_tick_cache():
+    """Keep only the last TICK_CACHE_MAX ticks in the cache file."""
+    if not os.path.exists(TICK_CACHE_FILE):
+        return
+    try:
+        with open(TICK_CACHE_FILE, 'r') as f:
+            lines = f.readlines()
+        if len(lines) > TICK_CACHE_MAX:
+            with open(TICK_CACHE_FILE, 'w') as f:
+                f.writelines(lines[-TICK_CACHE_MAX:])
+    except Exception:
+        log.exception("Failed to truncate tick cache")
+
 
 class CandleBuilder:
     """
@@ -26,10 +81,20 @@ class CandleBuilder:
     """
 
     def __init__(self):
-        self.ticks = []  # Raw 60-second ticks: list of {'timestamp', 'price', 'volume'}
+        self.ticks = []
         self.df_1h = pd.DataFrame()
         self.df_4h = pd.DataFrame()
         self.df_daily = pd.DataFrame()
+        self._live_candle_count = 0
+
+        # Load cached ticks from disk (survives restarts)
+        cached = _load_tick_cache()
+        if cached:
+            self.ticks = cached[-1440:]  # Keep last 24h
+            hours_covered = len(cached) / 60
+            log.info(f"Loaded {len(cached)} cached ticks from disk (covers ~{hours_covered:.1f} live hours)")
+        else:
+            log.info("No tick cache found — starting fresh")
 
     def bootstrap(self):
         """
@@ -41,24 +106,35 @@ class CandleBuilder:
             df = df.sort_values('timestamp').reset_index(drop=True)
             self.df_1h = df.copy()
             self._build_higher_timeframes()
+
+            # If we have cached ticks, rebuild candles from them immediately
+            if len(self.ticks) >= 60:
+                log.info(f"Rebuilding candles from {len(self.ticks)} cached ticks")
+                self._rebuild_from_ticks()
+
             return True
         return False
 
     def add_tick(self, price: float, volume: float = 0.0,
                  bid: float = 0.0, ask: float = 0.0):
         """Store a new 60-second tick."""
-        self.ticks.append({
+        tick = {
             'timestamp': datetime.utcnow(),
             'price': price,
             'volume': volume,
             'bid': bid,
             'ask': ask,
             'spread': (ask - bid) / price if price > 0 and ask > 0 and bid > 0 else 0,
-        })
+        }
+        self.ticks.append(tick)
+
+        # Persist to disk
+        _append_tick_to_cache(tick)
 
         # Keep last 24 hours of ticks (1440 ticks at 60s intervals)
         if len(self.ticks) > 1500:
             self.ticks = self.ticks[-1440:]
+            _truncate_tick_cache()
 
         # Rebuild candles every 60 ticks (every hour)
         if len(self.ticks) % 60 == 0:
@@ -108,7 +184,7 @@ class CandleBuilder:
 
             # Track live candle count; clear bootstrap flag after 20
             global BOOTSTRAP_DOMINANT
-            self._live_candle_count = getattr(self, '_live_candle_count', 0) + len(new_1h)
+            self._live_candle_count += len(new_1h)
             if self._live_candle_count >= 20 and BOOTSTRAP_DOMINANT:
                 BOOTSTRAP_DOMINANT = False
                 log.info(f"Bootstrap dominant cleared: {self._live_candle_count} live candles appended")

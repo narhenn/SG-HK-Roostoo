@@ -34,6 +34,9 @@ Thumbs.db
 .vscode/
 .idea/
 
+# Tick cache (live data, rebuilds automatically)
+data/ticks_cache.jsonl
+
 # Runtime state/log files
 state.json
 bot_state.json

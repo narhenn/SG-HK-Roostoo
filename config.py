@@ -45,8 +45,8 @@ EMA_MID = 21
 EMA_SLOW = 50
 # RSI (mean-reversion in sideways)
 RSI_PERIOD = 14
-RSI_OVERSOLD = 42                  # Buy in sideways regime (loosened for bear market)
-RSI_OVERBOUGHT = 58                # Sell in sideways regime (loosened for bear market)
+RSI_OVERSOLD = 48                  # Buy in sideways regime (48 for compressed RSI in low-ADX)
+RSI_OVERBOUGHT = 52                # Sell in sideways regime (52 for compressed RSI in low-ADX)
 # MACD
 MACD_FAST = 12
 MACD_SLOW = 26
