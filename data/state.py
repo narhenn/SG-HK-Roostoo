@@ -5,8 +5,11 @@ Owner: Narhen
 
 import json
 import os
+import logging
 from datetime import datetime, timezone
 from config import STATE_FILE, STARTING_CAPITAL
+
+log = logging.getLogger(__name__)
 
 
 def save_state(state: dict):
@@ -15,8 +18,8 @@ def save_state(state: dict):
     try:
         with open(STATE_FILE, 'w') as f:
             json.dump(state, f, indent=2, default=str)
-    except Exception as e:
-        print(f"Error saving state: {e}")
+    except Exception:
+        log.exception("Failed to save state")
 
 
 def load_state() -> dict:
@@ -26,8 +29,8 @@ def load_state() -> dict:
     try:
         with open(STATE_FILE, 'r') as f:
             return json.load(f)
-    except Exception as e:
-        print(f"Error loading state: {e}")
+    except Exception:
+        log.exception("Failed to load state")
         return {}
 
 

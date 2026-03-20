@@ -23,7 +23,7 @@ from datetime import datetime
 from config import (
     TRADING_PAIR, TRADE_INTERVAL_SECONDS, LOG_FILE, LOG_LEVEL,
     XGBOOST_MIN_PROBABILITY, LOGS_DIR, STARTING_CAPITAL,
-    PROTECT_DAYS_BEFORE_END,
+    PROTECT_DAYS_BEFORE_END, RSI_OVERSOLD,
 )
 from roostoo_client import RoostooClient
 from data.candle_builder import CandleBuilder
@@ -251,6 +251,18 @@ class TradingBot:
         # ══════════════════════════════════════════
         regime = detect_regime(df_1h, self.fear_greed, self.funding_rate, self.breadth)
 
+        # L1 gate logging — compute indicators for visibility
+        from strategy.regime import calculate_adx, calculate_bb_width
+        _adx = calculate_adx(df_1h)
+        _atr_s = calculate_atr(df_1h)
+        _atr_val = float(_atr_s.iloc[-1]) if not _atr_s.empty else 0
+        _atr_pct = float((_atr_s.dropna() < _atr_val).mean()) if len(_atr_s.dropna()) > 50 else 0.5
+        _bb_w = calculate_bb_width(df_1h)
+        log.info(
+            f"Cycle {cycle}: L1 REGIME={regime} | ADX={_adx:.1f} ATR_pct={_atr_pct:.2f} "
+            f"BB_w={_bb_w:.4f} F&G={self.fear_greed} Breadth={self.breadth:.2f} | Price=${price:.2f}"
+        )
+
         # ══════════════════════════════════════════
         # LAYER 2: SIGNAL GENERATION
         # ══════════════════════════════════════════
@@ -258,8 +270,23 @@ class TradingBot:
         direction = signal['direction']
         source = signal['source']
 
+        # L2 gate logging — show RSI/z-score for sideways, donchian for trending
+        close = df_1h['close']
+        _rsi_delta = close.diff()
+        _rsi_gain = _rsi_delta.where(_rsi_delta > 0, 0.0).rolling(14).mean()
+        _rsi_loss = (-_rsi_delta.where(_rsi_delta < 0, 0.0)).rolling(14).mean()
+        _rsi_rs = _rsi_gain / _rsi_loss.replace(0, 1e-10)
+        _rsi_val = float(100 - (100 / (1 + _rsi_rs)).iloc[-1])
+        _mean20 = float(close.rolling(20).mean().iloc[-1])
+        _std20 = float(close.rolling(20).std().iloc[-1])
+        _zscore = (float(close.iloc[-1]) - _mean20) / _std20 if _std20 > 0 else 0
+        _lower_bb = _mean20 - 2 * _std20
+        log.info(
+            f"Cycle {cycle}: L2 Signal={direction}({source}) | RSI={_rsi_val:.1f}(thr<{RSI_OVERSOLD}) "
+            f"Z={_zscore:.2f}(thr<-1.5) LowerBB=${_lower_bb:.0f} Price=${price:.0f}"
+        )
+
         if direction == 'HOLD':
-            log.info(f"Cycle {cycle}: HOLD | Regime={regime} | Price=${price:.2f} | Source={source}")
             return
 
         # PROTECT GAINS MODE: after meaningful profit, require higher confidence
@@ -307,8 +334,14 @@ class TradingBot:
         volumes_list = df_1h['volume'].tolist()[-20:] if 'volume' in df_1h.columns else [0] * 20
         current_spread = (ask - bid) / price if price > 0 and ask > 0 and bid > 0 else 0
         blocker_result = check_reversal_block(prices_list, volumes_list, current_spread, direction)
+        log.info(
+            f"Cycle {cycle}: L3 {blocker_result.get('decision')} | "
+            f"spike={blocker_result.get('check1_extreme_move')} "
+            f"spread={blocker_result.get('check2_spread')} "
+            f"volume={blocker_result.get('check3_volume')} "
+            f"cooldown={blocker_result.get('cooldown_remaining')}s"
+        )
         if blocker_result.get('decision') == 'BLOCK':
-            log.info(f"Cycle {cycle}: BLOCKED by reversal blocker. Reason={blocker_result.get('reason')}. Signal={direction} from {source}")
             return
 
         # ══════════════════════════════════════════
@@ -318,11 +351,13 @@ class TradingBot:
         df_daily = self.candles.get_df('daily')
 
         tf_result = check_timeframe(df_1h, df_4h, df_daily, regime=regime)
+        log.info(
+            f"Cycle {cycle}: L4 {'PASS' if tf_result['pass'] else 'BLOCKED'} | "
+            f"1H={tf_result['scores']['1h']} 4H={tf_result['scores']['4h']} "
+            f"Daily={tf_result['scores']['daily']} Total={tf_result['score']} "
+            f"Mult={tf_result['multiplier']} MinNeeded={'1' if regime=='SIDEWAYS' else '2'}"
+        )
         if not tf_result['pass']:
-            log.info(
-                f"Cycle {cycle}: BLOCKED by timeframe filter. "
-                f"Score={tf_result['score']} Scores={tf_result['scores']}"
-            )
             return
 
         # ══════════════════════════════════════════
@@ -343,11 +378,12 @@ class TradingBot:
 
         # In protect mode, require higher ML confidence (70%) to preserve gains
         min_prob = 0.70 if self.state.get('_protect_mode') else XGBOOST_MIN_PROBABILITY
+        log.info(
+            f"Cycle {cycle}: L5 {'PASS' if xgb_prob >= min_prob else 'BLOCKED'} | "
+            f"XGB_prob={xgb_prob:.3f} threshold={min_prob} "
+            f"{'PROTECT_MODE' if self.state.get('_protect_mode') else 'NORMAL'}"
+        )
         if xgb_prob < min_prob:
-            log.info(
-                f"Cycle {cycle}: BLOCKED by XGBoost. "
-                f"Prob={xgb_prob:.3f} < {min_prob} {'(PROTECT MODE)' if self.state.get('_protect_mode') else ''}"
-            )
             return
 
         # ══════════════════════════════════════════
@@ -387,8 +423,12 @@ class TradingBot:
             save_state_fn=save_state,
         )
 
+        log.info(
+            f"Cycle {cycle}: L6 {'PASS' if size_usd > 0 else 'BLOCKED'} | "
+            f"size=${size_usd:.0f} equity=${equity:.0f} regime={regime} "
+            f"tf_score={tf_result['score']} sharpe={rolling_sharpe:.2f}"
+        )
         if size_usd <= 0:
-            log.info(f"Cycle {cycle}: BLOCKED by position sizer (size=0)")
             return
 
         # ══════════════════════════════════════════
