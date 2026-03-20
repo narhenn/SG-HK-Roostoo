@@ -430,16 +430,17 @@ def compute_position_size(
         drawdown_pct = 0.0
     # If either condition is triggered, we close positions and halt for 24 hours.
     if drawdown_pct > DRAWDOWN_KILL or rolling_sharpe_3day < SHARPE_KILL:
-        if close_all_positions_fn is not None:
-            close_all_positions_fn()
-        _set_halt(state, KILL_HALT_HOURS)
-        _save_state(state, save_state_fn)
-        # Send Telegram alert
-        try:
-            from execution.alerts import alert_kill_switch
-            alert_kill_switch(drawdown_pct, rolling_sharpe_3day, current_capital)
-        except Exception:
-            pass
+        if not state.get('_kill_switch_fired'):
+            state['_kill_switch_fired'] = True
+            if close_all_positions_fn is not None:
+                close_all_positions_fn()
+            _set_halt(state, KILL_HALT_HOURS)
+            _save_state(state, save_state_fn)
+            try:
+                from execution.alerts import alert_kill_switch
+                alert_kill_switch(drawdown_pct, rolling_sharpe_3day, current_capital)
+            except Exception:
+                pass
         return 0.0
 
     # If the bot is currently halted, do not trade.

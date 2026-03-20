@@ -124,6 +124,7 @@ class TradingBot:
                 return True
             else:
                 self.state['halt_until'] = None
+                self.state['_kill_switch_fired'] = False
         return False
 
     def is_cooled_down(self) -> bool:
@@ -222,6 +223,10 @@ class TradingBot:
 
         if price <= 0:
             log.warning(f"Cycle {cycle}: Invalid price {price}, skipping")
+            return
+
+        if ask <= 0 or bid <= 0:
+            log.warning(f"Cycle {cycle}: Invalid bid/ask (bid={bid:.2f}, ask={ask:.2f}), skipping")
             return
 
         # Store tick

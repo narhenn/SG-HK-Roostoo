@@ -47,12 +47,15 @@ def _trending_signals(df: pd.DataFrame) -> dict:
     close = df['close']
     current_price = close.iloc[-1]
 
-    # Donchian breakout
+    # Donchian breakout — require previous bar INSIDE channel, current bar OUTSIDE
+    # Prevents phantom signals from bootstrap→live price gap
     donchian_high = close.rolling(window=DONCHIAN_UPPER_PERIOD).max()
     donchian_low = close.rolling(window=DONCHIAN_LOWER_PERIOD).min()
 
-    broke_upper = current_price >= donchian_high.iloc[-2]  # Compare to previous bar's channel
-    broke_lower = current_price <= donchian_low.iloc[-2]
+    broke_upper = (close.iloc[-2] < donchian_high.iloc[-2]) and \
+                  (current_price >= donchian_high.iloc[-1])
+    broke_lower = (close.iloc[-2] > donchian_low.iloc[-2]) and \
+                  (current_price <= donchian_low.iloc[-1])
 
     # EMA alignment
     ema_fast = _ema(close, EMA_FAST).iloc[-1]
@@ -65,6 +68,15 @@ def _trending_signals(df: pd.DataFrame) -> dict:
     _, _, histogram = _macd(close)
     macd_bullish = histogram.iloc[-1] > 0 and histogram.iloc[-1] > histogram.iloc[-2]
     macd_bearish = histogram.iloc[-1] < 0 and histogram.iloc[-1] < histogram.iloc[-2]
+
+    # Extreme oversold override — in a bear TRENDING regime, RSI < 30 is
+    # capitulation. Generate BUY for bounce trade even against the trend.
+    # Without this, TRENDING + bear market = only SELL signals = stuck forever.
+    rsi_series = _rsi(close, RSI_PERIOD)
+    rsi_val = rsi_series.iloc[-1]
+    if rsi_val < 30:
+        return {'direction': 'BUY', 'source': 'trending_oversold_bounce',
+                'macd_confirms': False}
 
     # Decision
     if broke_upper and bullish_alignment:
