@@ -43,14 +43,16 @@ def check_reversal_block(prices, volumes, spread, signal):
             }
         
         # STEP 2 — CHECK 1: EXTREME RECENT MOVE
+        # Skip during bootstrap: Binance→Roostoo price gap (~$3-4k) looks like a
+        # fake spike and blocks all trades for ~20 hours until live candles flush it out
         check1 = False
         reason1 = ""
-        if len(prices) >= 4:  # Need at least 4 prices for 3-candle comparison
+        from data.candle_builder import BOOTSTRAP_DOMINANT
+        if not BOOTSTRAP_DOMINANT and len(prices) >= 4:
             price_change_pct = ((prices[-1] - prices[-4]) / prices[-4]) * 100
             if abs(price_change_pct) > 2.0:
                 check1 = True
                 reason1 = f"Extreme move: {price_change_pct:.2f}% in last 3 candles"
-        # If len(prices) < 4, check1 remains False (skip check)
         
         # STEP 3 — CHECK 2: SPREAD WIDENING
         check2 = False
@@ -64,15 +66,16 @@ def check_reversal_block(prices, volumes, spread, signal):
         # If len(spread_history) < 5, check2 remains False (skip check)
         
         # STEP 4 — CHECK 3: ABNORMAL VOLUME
+        # Skip during bootstrap: Binance vs Roostoo volumes are on totally different
+        # scales, so any comparison across the boundary is meaningless
         check3 = False
         reason3 = ""
-        if len(volumes) >= 5:  # Need minimum 5 volumes for meaningful average
+        if not BOOTSTRAP_DOMINANT and len(volumes) >= 5:
             avg_volume = sum(volumes[:-1]) / len(volumes[:-1])  # Exclude current candle
             current_volume = volumes[-1]
-            if current_volume > 3.0 * avg_volume:
+            if avg_volume > 0 and current_volume > 3.0 * avg_volume:
                 check3 = True
                 reason3 = f"Abnormal volume: {current_volume:.0f} vs avg {avg_volume:.0f}"
-        # If len(volumes) < 5, check3 remains False (skip check)
         
         # STEP 5 — COMBINE RESULTS
         if check1 or check2 or check3:

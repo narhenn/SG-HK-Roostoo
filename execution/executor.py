@@ -9,12 +9,15 @@ Uses the shared bot state dict (from data/state.py) — no separate state file.
 """
 
 import json
+import logging
 import os
 import sys
 import time
 import threading
 from typing import Optional
 from datetime import datetime, timedelta, timezone
+
+log = logging.getLogger("TradingBot")
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
 if PROJECT_ROOT not in sys.path:
@@ -313,26 +316,58 @@ class TradeExecutor:
             self._log_event("SELL ignored: invalid position qty")
             return None
 
-        # Try limit sell first, then market
+        # Sell at bid to cross spread (taker) — fills instantly on mock exchange
         limit_price = _round_value(current_bid, self.price_precision)
         try:
             order = self.client.place_order(TRADING_PAIR, "SELL", "LIMIT", qty, limit_price)
             detail = order.get("OrderDetail", order)
             order_id = detail.get("OrderID") or order.get("OrderID")
-            status = _poll_order(self.client, order_id, 60, sleep_seconds=10)
-            if status["status"] != "FILLED":
-                try:
-                    self.client.cancel_order(order_id)
-                except Exception:
-                    pass
-                self.client.place_order(TRADING_PAIR, "SELL", "MARKET", qty, 0)
-                time.sleep(5)
-                status = {"avg_price": limit_price}
+            filled_qty = float(detail.get("FilledQuantity", 0) or 0)
+            avg_price = float(detail.get("FilledAverPrice", 0) or 0)
+            order_status = (detail.get("Status") or "").upper()
+            log.info(f"SELL order placed: id={order_id} status={order_status} filled={filled_qty} price={avg_price}")
+
+            # Check if immediately filled (expected on mock exchange)
+            if order_status in ("FILLED", "COMPLETED") or (filled_qty > 0 and filled_qty >= qty):
+                exit_price = avg_price or limit_price
+            else:
+                # Poll for fill
+                status = _poll_order(self.client, order_id, 60, sleep_seconds=5)
+                if status["status"] == "FILLED":
+                    exit_price = status.get("avg_price") or limit_price
+                else:
+                    # Cancel and retry at fresh bid
+                    try:
+                        self.client.cancel_order(order_id)
+                    except Exception:
+                        pass
+                    raw_ticker = self.client.get_ticker(TRADING_PAIR)
+                    parsed = _parse_ticker(raw_ticker)
+                    retry_price = _round_value(parsed['bid'] if parsed['bid'] > 0 else current_bid, self.price_precision)
+                    retry = self.client.place_order(TRADING_PAIR, "SELL", "LIMIT", qty, retry_price)
+                    retry_detail = retry.get("OrderDetail", retry)
+                    retry_status = (retry_detail.get("Status") or "").upper()
+                    retry_avg = float(retry_detail.get("FilledAverPrice", 0) or 0)
+                    retry_filled = float(retry_detail.get("FilledQuantity", 0) or 0)
+                    retry_id = retry_detail.get("OrderID") or retry.get("OrderID")
+                    log.info(f"SELL retry: id={retry_id} status={retry_status} filled={retry_filled} price={retry_avg}")
+
+                    if retry_status in ("FILLED", "COMPLETED") or (retry_filled > 0 and retry_filled >= qty):
+                        exit_price = retry_avg or retry_price
+                    else:
+                        # Poll retry order
+                        retry_poll = _poll_order(self.client, retry_id, 30, sleep_seconds=5)
+                        if retry_poll["status"] == "FILLED":
+                            exit_price = retry_poll.get("avg_price") or retry_price
+                        else:
+                            log.error(f"SELL failed after 2 attempts. Order {retry_id} status={retry_poll['status']}")
+                            from execution.alerts import send_alert
+                            send_alert(f"<b>SELL FAILED</b>\n2 attempts failed. Manual intervention needed.")
+                            return None
         except Exception as e:
             self._log_event(f"Exit order failed: {e}")
+            log.error(f"EXIT ORDER FAILED: {e}", exc_info=True)
             return None
-
-        exit_price = status.get("avg_price") or limit_price
         entry_price = self.state.get("exec_entry_price", 0.0)
         pnl = _pnl_with_fees(entry_price, exit_price, qty)
 
@@ -388,17 +423,35 @@ class TradeExecutor:
     def _evaluate_trailing(self, entry_price: float, current_price: float,
                           atr_14: float, regime: str, current_stop: float):
         if regime == "SIDEWAYS":
-            # Take profit at 0.7x ATR — quick wins in bear market bounces
-            # Stop at 1.0x ATR — tighter than trending, better risk/reward
-            take_profit = entry_price + 0.7 * atr_14
-            stop = entry_price - 1.0 * atr_14
+            # R:R = 1:2+ for scoring formula (small losses, bigger wins)
+            # SL = 0.7x ATR (tight — protects Calmar/Sortino)
+            # TP = 1.5x ATR (lets winners run)
+            take_profit = entry_price + 1.5 * atr_14
+            initial_stop = entry_price - 0.7 * atr_14
+            profit = current_price - entry_price
+
+            # Trailing logic for mean reversion:
+            # - Once 0.5x ATR in profit: move stop to breakeven
+            # - Once 0.7x ATR in profit: trail at 0.5x ATR below price
+            # This prevents winners from turning into losers
+            if profit >= 0.7 * atr_14:
+                # Trailing mode: stop follows price at 0.5x ATR distance
+                trailing_stop = current_price - 0.5 * atr_14
+                stop = max(current_stop, trailing_stop)
+            elif profit >= 0.5 * atr_14:
+                # Breakeven mode: don't lose money on a winning trade
+                stop = max(current_stop, entry_price)
+            else:
+                # Initial stop
+                stop = max(current_stop, initial_stop)
+
             if current_price >= take_profit:
                 return "FIXED_TAKE_PROFIT", stop, take_profit
             if current_price <= stop:
-                return "STOP_LOSS_FIXED", stop, take_profit
+                return "STOP_LOSS_SIDEWAYS", stop, take_profit
             return None, stop, take_profit
 
-        # TRENDING: trailing stop at 1.5x ATR
+        # TRENDING: trailing stop at 1.5x ATR (no fixed TP — let trends run)
         candidate = current_price - ATR_STOP_MULTIPLIER * atr_14
         new_stop = max(current_stop, candidate)
         if current_price <= new_stop:
@@ -414,54 +467,74 @@ class TradeExecutor:
         except (ValueError, TypeError):
             return False
         pnl_pct = (current_price - entry_price) / entry_price if entry_price > 0 else 0.0
-        # Only time-exit if position is flat or losing (don't exit profitable positions)
-        # Flat = less than round-trip taker fees (0.2%), meaning exit guarantees a loss
-        return hours >= TIME_EXIT_HOURS and pnl_pct < 0.003  # 0.3% threshold (above 0.2% fees)
+        # Only time-exit if position is negative. If positive (even slightly),
+        # let it run — trailing stop or TP will handle the exit.
+        # Mean reversion trades sometimes need >4hr to snap back.
+        return hours >= TIME_EXIT_HOURS and pnl_pct < 0.0
 
     def start_stop_monitor(self, atr_14: float, regime: str):
         def _loop():
+            log.info("[StopMonitor] Thread started. Checking every 10s.")
             while True:
-                # Check if position is still open (quick lock)
-                with self.lock:
-                    if not self.state.get("exec_position_open"):
-                        return
-                    entry = self.state.get("exec_entry_price", 0.0)
-                    current_stop = self.state.get("exec_stop", 0.0)
-
-                # API call OUTSIDE lock — doesn't block main thread
                 try:
-                    raw_ticker = self.client.get_ticker(TRADING_PAIR)
-                    parsed = _parse_ticker(raw_ticker)
-                    current_price = parsed['price']
-                    current_bid = parsed['bid'] if parsed['bid'] > 0 else current_price
-                except Exception:
+                    # Check if position is still open (quick lock)
+                    with self.lock:
+                        if not self.state.get("exec_position_open"):
+                            log.info("[StopMonitor] Position closed, thread exiting.")
+                            return
+                        entry = self.state.get("exec_entry_price", 0.0)
+                        current_stop = self.state.get("exec_stop", 0.0)
+
+                    # API call OUTSIDE lock — doesn't block main thread
+                    try:
+                        raw_ticker = self.client.get_ticker(TRADING_PAIR)
+                        parsed = _parse_ticker(raw_ticker)
+                        current_price = parsed['price']
+                        current_bid = parsed['bid'] if parsed['bid'] > 0 else current_price
+                    except Exception as e:
+                        log.warning(f"[StopMonitor] Ticker fetch failed: {e}")
+                        time.sleep(10)
+                        continue
+
+                    if current_price <= 0:
+                        time.sleep(10)
+                        continue
+
+                    # Evaluate exit conditions (quick lock for state read)
+                    with self.lock:
+                        if not self.state.get("exec_position_open"):
+                            return
+
+                        reason, new_stop, tp = self._evaluate_trailing(
+                            entry, current_price, atr_14, regime, current_stop
+                        )
+                        self.state["exec_stop"] = new_stop
+                        self.state["exec_take_profit"] = tp
+
+                        exit_reason = None
+                        if reason:
+                            exit_reason = reason
+                        elif self._should_time_exit(entry, current_price):
+                            exit_reason = "TIME_EXIT_FLAT"
+
+                    # Execute exit OUTSIDE the evaluation lock section
+                    # If sell fails, DON'T exit thread — retry next iteration
+                    if exit_reason:
+                        log.info(f"[StopMonitor] Exit triggered: {exit_reason} at ${current_price:.2f}")
+                        with self.lock:
+                            result = self._exit_position(exit_reason, current_bid)
+                        if result:
+                            log.info(f"[StopMonitor] Exit successful. Thread exiting.")
+                            return
+                        else:
+                            log.error(f"[StopMonitor] Exit FAILED for {exit_reason}. Will retry in 10s.")
+                            from execution.alerts import send_alert
+                            send_alert(f"<b>EXIT FAILED</b>\nReason: {exit_reason}\nRetrying in 10s...")
+
                     time.sleep(10)
-                    continue
-
-                if current_price <= 0:
+                except Exception as e:
+                    log.error(f"[StopMonitor] Unexpected error: {e}", exc_info=True)
                     time.sleep(10)
-                    continue
-
-                # Evaluate and update state (quick lock)
-                with self.lock:
-                    if not self.state.get("exec_position_open"):
-                        return
-
-                    reason, new_stop, tp = self._evaluate_trailing(
-                        entry, current_price, atr_14, regime, current_stop
-                    )
-                    self.state["exec_stop"] = new_stop
-                    self.state["exec_take_profit"] = tp
-
-                    if reason:
-                        self._exit_position(reason, current_bid)
-                        return
-
-                    if self._should_time_exit(entry, current_price):
-                        self._exit_position("TIME_EXIT_FLAT", current_bid)
-                        return
-
-                time.sleep(10)
 
         self.stop_thread = threading.Thread(target=_loop, daemon=True)
         self.stop_thread.start()

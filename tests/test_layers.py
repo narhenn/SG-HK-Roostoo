@@ -38,11 +38,17 @@ def test_layer2_signal_returns_valid_structure():
 def test_layer3_reversal_blocker_extreme_move_blocks():
     reset_cooldown()
 
+    # Temporarily disable bootstrap flag so spike check is active
+    import data.candle_builder as cb_mod
+    original = cb_mod.BOOTSTRAP_DOMINANT
+    cb_mod.BOOTSTRAP_DOMINANT = False
+
     prices = [79000, 79200, 80500, 81000, 81500]
     volumes = [100, 105, 98, 102, 101]
     spread = 0.0001
 
     result = check_reversal_block(prices, volumes, spread, "BUY")
+    cb_mod.BOOTSTRAP_DOMINANT = original  # Restore
     assert result["decision"] == "BLOCK"
     assert result["check1_extreme_move"] is True
 

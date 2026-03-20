@@ -80,14 +80,17 @@ def test_component2_trailing_stop_logic():
     _print_result("COMP2 TEST3", "TRAILING_STOP", f"{reason}", passed)
     assert passed
 
-    reason, stop, _ = ex._evaluate_trailing(80_000, 80_520, 500, "SIDEWAYS", 0)
+    # SIDEWAYS: TP=1.5*ATR=750, SL=0.7*ATR=350
+    # Price 80,800 = entry+800 > TP(80,750) → take profit
+    reason, stop, _ = ex._evaluate_trailing(80_000, 80_800, 500, "SIDEWAYS", 0)
     passed = reason == "FIXED_TAKE_PROFIT"
     _print_result("COMP2 TEST4", "FIXED_TAKE_PROFIT", f"{reason}", passed)
     assert passed
 
-    reason, stop, _ = ex._evaluate_trailing(80_000, 79_200, 500, "SIDEWAYS", 0)
-    passed = reason == "STOP_LOSS_FIXED"
-    _print_result("COMP2 TEST5", "STOP_LOSS_FIXED", f"{reason}", passed)
+    # Price 79,600 = entry-400 > SL(79,650) but close. Try 79,600 < 79,650 → stop
+    reason, stop, _ = ex._evaluate_trailing(80_000, 79_600, 500, "SIDEWAYS", 0)
+    passed = reason == "STOP_LOSS_SIDEWAYS"
+    _print_result("COMP2 TEST5", "STOP_LOSS_SIDEWAYS", f"{reason}", passed)
     assert passed
 
 
@@ -102,13 +105,16 @@ def test_component2_pnl_with_fees():
 def test_component3_time_exit_logic():
     client = FakeClient()
     ex = TradeExecutor(client, 2, 5, state={}, save_state_fn=lambda s: None)
+    # Time exit only fires if position is NEGATIVE (pnl < 0)
+    # Price 79,900 < entry 80,000 → negative → should time exit
     ex.state["exec_open_time"] = (datetime.now(timezone.utc) - timedelta(hours=9)).isoformat()
-    passed = ex._should_time_exit(80_000, 80_040)
+    passed = ex._should_time_exit(80_000, 79_900)
     _print_result("COMP3 TEST1", True, passed, passed)
     assert passed
 
+    # Price 80,040 > entry 80,000 → positive → should NOT time exit
     ex.state["exec_open_time"] = (datetime.now(timezone.utc) - timedelta(hours=9)).isoformat()
-    passed = not ex._should_time_exit(80_000, 80_400)
+    passed = not ex._should_time_exit(80_000, 80_040)
     _print_result("COMP3 TEST2", False, not passed, passed)
     assert passed
 

@@ -26,7 +26,7 @@ STOP_MONITOR_INTERVAL = 15            # Trailing stop check interval (seconds)
 # 3. Delete state.json on EC2: rm -f state.json
 # 4. sudo systemctl restart bot.service
 # ══════════════════════════════════════════
-STARTING_CAPITAL = 50_000             # Testing account. Change to 1_000_000 on Mar 21.
+STARTING_CAPITAL = 50_000              # Testing account. Switch to 1_000_000 at 8pm SGT.
 COMPETITION_CAPITAL = 1_000_000       # CONFIRMED via API: competition account is $1M
 BTC_PRICE_PRECISION = 2               # From exchangeInfo
 BTC_AMOUNT_PRECISION = 5              # From exchangeInfo
@@ -79,7 +79,7 @@ KELLY_FRACTION = 0.25              # Quarter-Kelly
 KELLY_MIN_POSITION = 0.02          # 2% minimum position
 KELLY_MAX_POSITION = 0.15          # 15% maximum position
 MAX_POSITION_PCT = 0.35            # Hard cap: 35% of capital
-MAX_LOSS_PER_TRADE = 0.015         # 1.5% max loss per trade
+MAX_LOSS_PER_TRADE = 0.010         # 1.0% max loss per trade (tighter for Calmar)
 RISK_PER_TRADE = 0.005             # 0.5% risk per trade
 MAX_OPEN_ORDERS = 3                # Max concurrent positions
 
