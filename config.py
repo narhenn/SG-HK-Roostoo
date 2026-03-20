@@ -121,3 +121,11 @@ HISTORICAL_DATA_FILE = "data/btc_1h_90days.csv"
 # ── Logging ──
 LOG_FILE = "logs/bot.log"
 LOG_LEVEL = "INFO"
+
+
+
+# ── Multi-coin Hybrid (disabled until BTC bot confirmed working) ──
+ENABLE_MULTICOIN = False        # Flip to True after BTC bot verified
+ALT_CAPITAL_PCT = 0.30          # 30% of capital for alts
+ALT_COINS_COUNT = 2             # Top 2 momentum coins
+ALT_ROTATE_INTERVAL = 24        # Re-rank every 24 cycles (not every minute)
