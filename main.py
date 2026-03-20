@@ -26,6 +26,7 @@ from config import (
     PROTECT_DAYS_BEFORE_END, RSI_OVERSOLD,
     ADX_TREND_THRESHOLD, ADX_NOTREND_THRESHOLD,
     CONSERVATIVE_DAYS,
+    ENABLE_MULTICOIN, ALT_CAPITAL_PCT,
 )
 from roostoo_client import RoostooClient
 from data.candle_builder import CandleBuilder
@@ -104,7 +105,7 @@ class TradingBot:
     def fetch_external_data(self):
         """Fetch Fear & Greed, funding rate, breadth (every hour)."""
         now = time.time()
-        if now - self.last_external_fetch < 3600:  # Once per hour
+        if now - self.last_external_fetch < 3600:
             return
 
         try:
@@ -140,7 +141,7 @@ class TradingBot:
     def send_heartbeat(self):
         """Send a heartbeat to Telegram every 6 hours so team knows bot is alive."""
         now = time.time()
-        if now - self.last_heartbeat < 21600:  # 6 hours
+        if now - self.last_heartbeat < 21600:
             return
 
         equity = self.state.get('current_equity', STARTING_CAPITAL)
@@ -151,7 +152,6 @@ class TradingBot:
         df_1h = self.candles.get_df('1h')
         regime = detect_regime(self.candles.df_1h, self.fear_greed, self.funding_rate, self.breadth) if len(df_1h) > 55 else 'UNKNOWN'
 
-        # Use live Roostoo price, not bootstrap
         try:
             raw_t = self.client.get_ticker(TRADING_PAIR)
             if isinstance(raw_t, dict) and 'Data' in raw_t:
@@ -178,14 +178,13 @@ class TradingBot:
     def send_daily_summary(self):
         """Send daily summary to Telegram (once every 24 hours)."""
         now = time.time()
-        if now - self.last_daily_summary < 86400:  # 24 hours
+        if now - self.last_daily_summary < 86400:
             return
 
         equity = self.state.get('current_equity', STARTING_CAPITAL)
         peak = self.state.get('peak_equity', STARTING_CAPITAL)
         history = self.state.get('trade_history', [])
 
-        # Count today's trades
         today = datetime.utcnow().strftime('%Y-%m-%d')
         today_trades = [t for t in history if t.get('exit_time', '').startswith(today)]
         wins = len([t for t in today_trades if t.get('pnl', 0) > 0])
@@ -197,7 +196,7 @@ class TradingBot:
         log.info("Daily summary sent to Telegram")
 
     def has_position(self) -> bool:
-        """Check if we currently hold BTC (S2: one position at a time)."""
+        """Check if we currently hold BTC."""
         return bool(self.state.get('exec_position_open')) or len(self.state.get('positions', [])) > 0
 
     def run_cycle(self):
@@ -208,7 +207,6 @@ class TradingBot:
         # ── Fetch current price ──
         try:
             raw_ticker = self.client.get_ticker(TRADING_PAIR)
-            # Roostoo nests data under 'Data' -> pair name
             if isinstance(raw_ticker, dict) and 'Data' in raw_ticker:
                 ticker = raw_ticker['Data'].get(TRADING_PAIR, {})
             else:
@@ -225,6 +223,7 @@ class TradingBot:
             log.warning(f"Cycle {cycle}: Invalid price {price}, skipping")
             return
 
+        # ── CHANGE 1: Guard against zero bid/ask ──
         if ask <= 0 or bid <= 0:
             log.warning(f"Cycle {cycle}: Invalid bid/ask (bid={bid:.2f}, ask={ask:.2f}), skipping")
             return
@@ -236,14 +235,12 @@ class TradingBot:
         competition_end = datetime(2026, 3, 31, 23, 59)
         days_left = (competition_end - datetime.utcnow()).total_seconds() / 86400
         if days_left <= 1 and self.has_position():
-            # Last day: close all positions to lock in final score
             log.info(f"Cycle {cycle}: FINAL DAY — closing position to lock score")
             self.executor.execute_sell(bid, reason="COMPETITION_END")
             return
         if days_left <= PROTECT_DAYS_BEFORE_END and not self.has_position():
-            # Last 2 days: don't open new positions
             log.info(f"Cycle {cycle}: {days_left:.1f} days left — no new positions")
-            self.candles.add_tick(price, volume, bid, ask)  # Still collect data
+            self.candles.add_tick(price, volume, bid, ask)
             return
 
         # ── Check halts ──
@@ -254,22 +251,18 @@ class TradingBot:
         # ── Fetch external data (hourly) ──
         self.fetch_external_data()
 
-        # Get DataFrames
-        # df_1h includes live candle (for RSI/BB/signals)
-        # df_1h_base excludes live candle (for ATR/ADX/regime — avoids gap spike)
         df_1h = self.candles.get_df('1h')
-        df_1h_base = self.candles.df_1h  # Raw bootstrap + aggregated candles, no live candle
+        df_1h_base = self.candles.df_1h
 
         if df_1h.empty or len(df_1h) < 55:
             log.info(f"Cycle {cycle}: Waiting for data ({len(df_1h)} 1H candles, need 55+). Price=${price:.2f}")
             return
 
         # ══════════════════════════════════════════
-        # LAYER 1: REGIME DETECTION (uses base df — no live candle gap spike)
+        # LAYER 1: REGIME DETECTION
         # ══════════════════════════════════════════
         regime = detect_regime(df_1h_base, self.fear_greed, self.funding_rate, self.breadth)
 
-        # L1 gate logging — uses base df (no gap spike)
         from strategy.regime import calculate_adx, calculate_bb_width
         _adx = calculate_adx(df_1h_base)
         _atr_s = calculate_atr(df_1h_base)
@@ -289,7 +282,6 @@ class TradingBot:
         direction = signal['direction']
         source = signal['source']
 
-        # L2 gate logging — show RSI/z-score for sideways, donchian for trending
         close = df_1h['close']
         _rsi_delta = close.diff()
         _rsi_gain = _rsi_delta.where(_rsi_delta > 0, 0.0).rolling(14).mean()
@@ -305,7 +297,6 @@ class TradingBot:
             f"Z={_zscore:.2f}(thr<-1.5) LowerBB=${_lower_bb:.0f} Price=${price:.0f}"
         )
 
-        # Telegram: RSI approaching threshold
         rsi_gap = _rsi_val - RSI_OVERSOLD
         if 0 < rsi_gap <= 2 and direction == 'HOLD':
             send_alert(
@@ -318,7 +309,6 @@ class TradingBot:
         if direction == 'HOLD':
             return
 
-        # Telegram: BUY/SELL signal generated — entering L3+
         if direction == 'BUY':
             send_alert(
                 f"<b>BUY SIGNAL FIRED</b>\n"
@@ -328,26 +318,20 @@ class TradingBot:
                 f"Entering L3/L4/L5/L6 gates..."
             )
 
-        # PROTECT GAINS MODE: after meaningful profit, require higher confidence
-        # Losses hurt ratios 5x more than equivalent wins help (Calmar asymmetry)
         trade_history = self.state.get('trade_history', [])
         total_pnl = sum(t.get('pnl', 0) for t in trade_history)
         equity = self.state.get('current_equity', STARTING_CAPITAL)
         pnl_pct = total_pnl / equity if equity > 0 else 0
         if pnl_pct > 0.005 and len(trade_history) >= 3:
-            # Up >0.5% with 3+ trades — protect gains
             self.state['_protect_mode'] = True
             log.info(f"Cycle {cycle}: PROTECT MODE active (P&L: {pnl_pct:.2%})")
         else:
             self.state['_protect_mode'] = False
 
-        # S1: SELL = exit only. No position = ignore sell signal
         if direction == 'SELL' and not self.has_position():
             log.info(f"Cycle {cycle}: SELL signal but no position. Ignoring.")
             return
 
-        # SELL signals skip L3/L4/L5/L6 — exit immediately
-        # If price is dumping, L3 would block exit ("extreme move >2%")
         if direction == 'SELL' and self.has_position():
             log.info(
                 f"Cycle {cycle}: EXECUTING SELL | "
@@ -356,7 +340,7 @@ class TradingBot:
             self.executor.execute_sell(bid, reason=f"L2_{source}")
             return
 
-        # S2: One position at a time
+        # S2: One position at a time for BTC
         if direction == 'BUY' and self.has_position():
             log.info(f"Cycle {cycle}: BUY signal but already in position. Skipping.")
             return
@@ -386,11 +370,13 @@ class TradingBot:
 
         # ══════════════════════════════════════════
         # LAYER 4: MULTI-TIMEFRAME FILTER
+        # ── CHANGE 2: pass signal source for oversold override ──
         # ══════════════════════════════════════════
         df_4h = self.candles.get_df('4h')
         df_daily = self.candles.get_df('daily')
 
-        tf_result = check_timeframe(df_1h, df_4h, df_daily, regime=regime)
+        tf_result = check_timeframe(df_1h, df_4h, df_daily, regime=regime,
+                                    signal_source=signal.get('source', ''))
         log.info(
             f"Cycle {cycle}: L4 {'PASS' if tf_result['pass'] else 'BLOCKED'} | "
             f"1H={tf_result['scores']['1h']} 4H={tf_result['scores']['4h']} "
@@ -409,7 +395,6 @@ class TradingBot:
         # LAYER 5: XGBOOST CONFIRMATION
         # ══════════════════════════════════════════
         if _USE_PRANATI_MODEL:
-            # Use Pranati's model
             price_history = df_1h.to_dict('records')
             current_spread = (ask - bid) / price if price > 0 and ask > 0 and bid > 0 else 0.001
             xgb_decision, xgb_prob = get_xgboost_signal(
@@ -417,11 +402,9 @@ class TradingBot:
                 spread_proxy=current_spread, threshold=XGBOOST_MIN_PROBABILITY
             )
         else:
-            # Fallback to stub
             features = engineer_features(df_1h)
             xgb_prob = xgboost_confirm(features)
 
-        # In protect mode, require higher ML confidence (70%) to preserve gains
         min_prob = 0.70 if self.state.get('_protect_mode') else XGBOOST_MIN_PROBABILITY
         log.info(
             f"Cycle {cycle}: L5 {'PASS' if xgb_prob >= min_prob else 'BLOCKED'} | "
@@ -438,13 +421,10 @@ class TradingBot:
         equity = self.state.get('current_equity', STARTING_CAPITAL)
         trade_history = self.state.get('trade_history', [])
 
-        # Estimate stop distance for sizing (default 3% of price)
         est_stop_distance = price * 0.03
-
         atr_series = calculate_atr(df_1h_base)
         atr_14 = float(atr_series.iloc[-1]) if not atr_series.empty else est_stop_distance
 
-        # Compute rolling 3-day Sharpe from recent trades (for kill switch)
         rolling_sharpe = 0.0
         recent_trades = trade_history[-20:] if trade_history else []
         if len(recent_trades) >= 3:
@@ -469,7 +449,7 @@ class TradingBot:
             save_state_fn=save_state,
         )
 
-        # Conservative mode: first 2 days, halve position size
+        # Conservative mode: first 2 days halve position size
         competition_start = datetime(2026, 3, 21)
         days_in = (datetime.utcnow() - competition_start).total_seconds() / 86400
         if 0 < days_in <= CONSERVATIVE_DAYS:
@@ -486,7 +466,7 @@ class TradingBot:
             return
 
         # ══════════════════════════════════════════
-        # LAYER 7: EXECUTE
+        # LAYER 7: EXECUTE BTC
         # ══════════════════════════════════════════
         log.info(
             f"Cycle {cycle}: EXECUTING BUY | "
@@ -514,6 +494,41 @@ class TradingBot:
             entry_context=entry_context,
         )
 
+        # ══════════════════════════════════════════
+        # CHANGE 3: MULTICOIN — buy top momentum alts if enabled
+        # ══════════════════════════════════════════
+        if ENABLE_MULTICOIN:
+            from strategy.multicoin import rank_coins, get_alt_position_size
+            try:
+                top_alts = rank_coins(self.client)
+                for alt in top_alts[:2]:
+                    if alt['bid'] <= 0 or alt['ask'] <= 0:
+                        continue
+                    alt_size = get_alt_position_size(
+                        equity, ALT_CAPITAL_PCT, len(top_alts[:2])
+                    )
+                    log.info(
+                        f"Cycle {cycle}: ALT {alt['pair']} "
+                        f"change={alt['change']:.2%} size=${alt_size:.0f}"
+                    )
+                    self.executor.execute_trade(
+                        final_position_size_usd=alt_size,
+                        current_btc_price=alt['price'],
+                        current_bid=alt['bid'],
+                        current_ask=alt['ask'],
+                        atr_14=atr_14,
+                        regime=regime,
+                        signal_source='MULTICOIN_MOMENTUM',
+                        entry_context={
+                            'xgboost_probability': 0.7,
+                            'timeframe_total_score': 1,
+                            'reversal_blocker_result': 'PASSED',
+                            'timeframe_scores': {'1H': 0, '4H': 0, 'Daily': 0},
+                        },
+                    )
+            except Exception as e:
+                log.error(f"Cycle {cycle}: Multicoin error: {e}")
+
     def run(self):
         """Main loop. Runs until stopped."""
         self.running = True
@@ -524,10 +539,8 @@ class TradingBot:
         log.info(f"Strategy: Adaptive Regime Momentum (ARM v2) — 7 Layer Pipeline")
         log.info("=" * 60)
 
-        # Bootstrap with historical data
         self.bootstrap()
 
-        # Test connection
         try:
             server_time = self.client.get_server_time()
             log.info(f"Connected to Roostoo. Server time: {server_time}")
@@ -536,10 +549,8 @@ class TradingBot:
             alert_error(f"Cannot connect to Roostoo API: {e}")
             return
 
-        # Sync equity from API (non-fatal if blocked)
         try:
             balance = self.client.get_balance()
-            # Roostoo returns: {'SpotWallet': {'USD': {'Free': 50000, 'Lock': 0}}}
             wallet = balance.get('SpotWallet', balance.get('Data', {}))
             usd_free = 0.0
             if isinstance(wallet, dict) and 'USD' in wallet:
@@ -553,12 +564,10 @@ class TradingBot:
             log.warning(f"Could not fetch balance (geo-blocked?): {e}")
             log.info(f"Using equity from state: ${self.state.get('current_equity', STARTING_CAPITAL):,.0f}")
 
-        # Startup alert
         df_1h = self.candles.get_df('1h')
         regime = detect_regime(df_1h) if len(df_1h) > 55 else 'UNKNOWN'
         alert_startup(self.state.get('current_equity', STARTING_CAPITAL), regime, len(df_1h))
 
-        # Recover open position: restart stop monitor if we were holding BTC
         if self.state.get('exec_position_open'):
             atr_series = calculate_atr(df_1h)
             atr_14 = float(atr_series.iloc[-1]) if len(df_1h) > 20 and not atr_series.empty else 1000.0
