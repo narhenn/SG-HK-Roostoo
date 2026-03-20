@@ -112,7 +112,6 @@ def _sideways_signals(df: pd.DataFrame) -> dict:
             return {'direction': 'BUY', 'source': 'rsi_oversold_bootstrap'}
         elif rsi_val > RSI_OVERBOUGHT:
             return {'direction': 'SELL', 'source': 'rsi_overbought_bootstrap'}
-        log.info(f"L2 BB suppressed (bootstrap dominant) | RSI={rsi_val:.1f} Z={z_score:.2f}")
         return {'direction': 'HOLD', 'source': 'bootstrap_stale'}
 
     # Decision — BB touch alone is sufficient in SIDEWAYS
