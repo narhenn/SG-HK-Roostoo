@@ -288,8 +288,28 @@ class TradingBot:
             f"Z={_zscore:.2f}(thr<-1.5) LowerBB=${_lower_bb:.0f} Price=${price:.0f}"
         )
 
+        # Telegram: RSI approaching threshold
+        rsi_gap = _rsi_val - RSI_OVERSOLD
+        if 0 < rsi_gap <= 2 and direction == 'HOLD':
+            send_alert(
+                f"<b>RSI APPROACHING</b>\n"
+                f"RSI={_rsi_val:.1f} (trigger at {RSI_OVERSOLD})\n"
+                f"Gap: {rsi_gap:.1f} points\n"
+                f"Price: ${price:,.2f} | Regime: {regime}"
+            )
+
         if direction == 'HOLD':
             return
+
+        # Telegram: BUY/SELL signal generated — entering L3+
+        if direction == 'BUY':
+            send_alert(
+                f"<b>BUY SIGNAL FIRED</b>\n"
+                f"Source: {source}\n"
+                f"RSI={_rsi_val:.1f} Z={_zscore:.2f}\n"
+                f"Price: ${price:,.2f} | Regime: {regime}\n"
+                f"Entering L3/L4/L5/L6 gates..."
+            )
 
         # PROTECT GAINS MODE: after meaningful profit, require higher confidence
         # Losses hurt ratios 5x more than equivalent wins help (Calmar asymmetry)
@@ -344,6 +364,7 @@ class TradingBot:
             f"cooldown={blocker_result.get('cooldown_remaining')}s"
         )
         if blocker_result.get('decision') == 'BLOCK':
+            send_alert(f"<b>L3 BLOCKED BUY</b>\n{blocker_result.get('reason')}\nPrice: ${price:,.2f}")
             return
 
         # ══════════════════════════════════════════
@@ -360,6 +381,11 @@ class TradingBot:
             f"Mult={tf_result['multiplier']} MinNeeded={'1' if regime=='SIDEWAYS' else '2'}"
         )
         if not tf_result['pass']:
+            send_alert(
+                f"<b>L4 BLOCKED BUY</b>\n"
+                f"TF score={tf_result['score']} (need {1 if regime=='SIDEWAYS' else 2})\n"
+                f"1H={tf_result['scores']['1h']} 4H={tf_result['scores']['4h']} Daily={tf_result['scores']['daily']}"
+            )
             return
 
         # ══════════════════════════════════════════
@@ -386,6 +412,7 @@ class TradingBot:
             f"{'PROTECT_MODE' if self.state.get('_protect_mode') else 'NORMAL'}"
         )
         if xgb_prob < min_prob:
+            send_alert(f"<b>L5 BLOCKED BUY</b>\nXGB={xgb_prob:.3f} < {min_prob}")
             return
 
         # ══════════════════════════════════════════
@@ -431,6 +458,7 @@ class TradingBot:
             f"tf_score={tf_result['score']} sharpe={rolling_sharpe:.2f}"
         )
         if size_usd <= 0:
+            send_alert(f"<b>L6 BLOCKED BUY</b>\nPosition size=$0\nRegime={regime} TF={tf_result['score']}")
             return
 
         # ══════════════════════════════════════════

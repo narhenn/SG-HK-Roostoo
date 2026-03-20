@@ -1,21 +1,35 @@
 """
 Watchdog — runs separately from the bot.
-Checks if main.py is alive every 5 minutes.
-If the bot is dead, sends a Telegram alert and restarts it.
+Checks if main.py is alive every 2 minutes.
+If dead: waits 30s, restarts, alerts Telegram.
+All events logged to logs/watchdog.log.
 
-Run: python3 watchdog.py
-Best to run in a separate tmux session: tmux new -s watchdog
+Run via systemd (bot.service) or: python3 watchdog.py
 """
 
 import subprocess
 import time
-import requests
+import logging
 import os
+import requests
 
 TELEGRAM_TOKEN = "8742026308:AAHDWHuAX8W4YJKAg13Wq48eCAKYXVRfcnk"
 TELEGRAM_CHAT_ID = "-5271669161"
-CHECK_INTERVAL = 300  # Check every 5 minutes
+CHECK_INTERVAL = 120  # Check every 2 minutes
+RESTART_DELAY = 30    # Wait before restart to avoid crash loops
 BOT_DIR = os.path.dirname(os.path.abspath(__file__))
+LOG_DIR = os.path.join(BOT_DIR, "logs")
+
+os.makedirs(LOG_DIR, exist_ok=True)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    handlers=[
+        logging.FileHandler(os.path.join(LOG_DIR, "watchdog.log")),
+        logging.StreamHandler(),
+    ],
+)
+log = logging.getLogger("Watchdog")
 
 
 def send_telegram(message):
@@ -27,7 +41,7 @@ def send_telegram(message):
             "parse_mode": "HTML",
         }, timeout=10)
     except Exception:
-        pass
+        log.warning("Failed to send Telegram alert")
 
 
 def is_bot_running():
@@ -48,18 +62,19 @@ def start_bot():
         subprocess.Popen(
             ["python3", "main.py"],
             cwd=BOT_DIR,
-            stdout=open(os.path.join(BOT_DIR, "logs", "bot_stdout.log"), "a"),
-            stderr=open(os.path.join(BOT_DIR, "logs", "bot_stderr.log"), "a"),
+            stdout=open(os.path.join(LOG_DIR, "bot_stdout.log"), "a"),
+            stderr=open(os.path.join(LOG_DIR, "bot_stderr.log"), "a"),
         )
         return True
     except Exception as e:
+        log.exception("Failed to start bot")
         send_telegram(f"<b>WATCHDOG ERROR</b>\nFailed to restart bot: {e}")
         return False
 
 
 if __name__ == "__main__":
-    print("Watchdog started. Checking bot every 5 minutes.")
-    send_telegram("<b>WATCHDOG STARTED</b>\nMonitoring bot process every 5 minutes.")
+    log.info("Watchdog started")
+    send_telegram("<b>WATCHDOG STARTED</b>\nMonitoring bot every 2 minutes. Auto-restart enabled.")
 
     consecutive_failures = 0
 
@@ -67,27 +82,48 @@ if __name__ == "__main__":
         try:
             if is_bot_running():
                 if consecutive_failures > 0:
+                    log.info("Bot recovered")
                     send_telegram("<b>BOT RECOVERED</b>\nBot is running again.")
                 consecutive_failures = 0
             else:
                 consecutive_failures += 1
+                log.warning(f"Bot is DOWN (check #{consecutive_failures})")
+
+                if consecutive_failures >= 5:
+                    log.error("Bot failed to stay alive after 5 attempts — stopping restarts")
+                    send_telegram(
+                        "<b>WATCHDOG GIVING UP</b>\n"
+                        "Bot crashed 5 times in a row. Manual intervention needed.\n"
+                        "Check: tail -50 logs/bot_stderr.log"
+                    )
+                    # Keep monitoring but stop restarting
+                    time.sleep(CHECK_INTERVAL)
+                    continue
+
                 send_telegram(
-                    f"<b>BOT IS DOWN</b>\n"
-                    f"main.py not running (check #{consecutive_failures})\n"
-                    f"Attempting restart..."
+                    f"<b>BOT CRASHED</b>\n"
+                    f"Attempt #{consecutive_failures}\n"
+                    f"Waiting {RESTART_DELAY}s then restarting..."
                 )
+
+                log.info(f"Waiting {RESTART_DELAY}s before restart")
+                time.sleep(RESTART_DELAY)
+
                 if start_bot():
-                    time.sleep(10)  # Give it a moment to start
+                    log.info("Bot restart initiated")
+                    time.sleep(10)  # Give it a moment
                     if is_bot_running():
-                        send_telegram("<b>BOT RESTARTED</b>\nSuccessfully restarted main.py")
+                        log.info("Bot restarted successfully")
+                        send_telegram("<b>BOT AUTO-RESTARTED</b>\nBot is back up and running.")
                     else:
-                        send_telegram("<b>RESTART FAILED</b>\nBot did not come back up. Check logs on EC2.")
+                        log.error("Bot failed to start")
+                        send_telegram("<b>RESTART FAILED</b>\nBot did not come back up. Check EC2.")
 
             time.sleep(CHECK_INTERVAL)
 
         except KeyboardInterrupt:
-            print("Watchdog stopped.")
+            log.info("Watchdog stopped by user")
             break
         except Exception as e:
-            print(f"Watchdog error: {e}")
+            log.exception(f"Watchdog error: {e}")
             time.sleep(CHECK_INTERVAL)

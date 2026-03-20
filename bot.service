@@ -1,0 +1,16 @@
+[Unit]
+Description=QuantX Trading Bot Watchdog
+After=network.target
+
+[Service]
+Type=simple
+User=ssm-user
+WorkingDirectory=/home/ssm-user/SG-HK-Roostoo
+ExecStart=/usr/bin/python3 /home/ssm-user/SG-HK-Roostoo/watchdog.py
+Restart=always
+RestartSec=30
+StandardOutput=append:/home/ssm-user/SG-HK-Roostoo/logs/watchdog_systemd.log
+StandardError=append:/home/ssm-user/SG-HK-Roostoo/logs/watchdog_systemd.log
+
+[Install]
+WantedBy=multi-user.target
