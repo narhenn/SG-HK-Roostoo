@@ -427,7 +427,7 @@ class TradingBot:
 
         rolling_sharpe = 0.0
         recent_trades = trade_history[-20:] if trade_history else []
-        if len(recent_trades) >= 3:
+        if len(recent_trades) >= 5:
             returns = [t.get('pnl_pct', 0) for t in recent_trades]
             mean_ret = statistics.mean(returns)
             std_ret = statistics.stdev(returns) if len(returns) > 1 else 1.0

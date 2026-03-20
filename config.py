@@ -89,7 +89,7 @@ DRAWDOWN_LEVEL_2 = 0.05            # 5% → reduce to 15% max
 DRAWDOWN_LEVEL_3 = 0.08            # 8% → halt 4 hours
 DRAWDOWN_LEVEL_4 = 0.10            # 10% → emergency mode
 DRAWDOWN_KILL = 0.15               # 15% → kill switch
-SHARPE_KILL = -0.5                 # Negative Sharpe → kill switch
+SHARPE_KILL = -1.0                 # Negative Sharpe → kill switch (-0.5 triggers on 2 losses in 3 trades)
 HALT_HOURS = 4                     # Hours to halt after L3 drawdown
 KILL_HALT_HOURS = 24               # Hours to halt after kill switch
 
