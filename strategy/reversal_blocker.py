@@ -42,43 +42,41 @@ def check_reversal_block(prices, volumes, spread, signal):
                 "cooldown_remaining": cooldown_remaining
             }
         
-        # STEP 2 — CHECK 1: EXTREME RECENT MOVE
-        # Skip during bootstrap: Binance→Roostoo price gap (~$3-4k) looks like a
-        # fake spike and blocks all trades for ~20 hours until live candles flush it out
+        # STEP 2 — CHECK 1: EXTREME RECENT MOVE (ADVISORY ONLY)
+        # Removed as hard block: L2 generates BUY on 2% dips, L3 was blocking
+        # the same 2% moves. They cancel each other out. Stops protect downside.
         check1 = False
         reason1 = ""
         from data.candle_builder import BOOTSTRAP_DOMINANT
         if not BOOTSTRAP_DOMINANT and len(prices) >= 4:
             price_change_pct = ((prices[-1] - prices[-4]) / prices[-4]) * 100
             if abs(price_change_pct) > 2.0:
-                check1 = True
-                reason1 = f"Extreme move: {price_change_pct:.2f}% in last 3 candles"
-        
-        # STEP 3 — CHECK 2: SPREAD WIDENING
+                # Log only, don't block — the dip IS what we want to buy
+                print(f"[L3] Advisory: {price_change_pct:.2f}% move in 3 candles (not blocking)")
+
+        # STEP 3 — CHECK 2: SPREAD WIDENING (STILL BLOCKS)
+        # Wide spread = real cost on entry AND exit. Stops can't protect against this.
         check2 = False
         reason2 = ""
-        spread_history.append(spread)  # Add current spread to rolling history
-        if len(spread_history) >= 5:  # Need minimum 5 readings for meaningful average
+        spread_history.append(spread)
+        if len(spread_history) >= 5:
             avg_spread = sum(spread_history) / len(spread_history)
             if spread > 1.5 * avg_spread:
                 check2 = True
                 reason2 = f"Spread widening: {spread:.6f} vs avg {avg_spread:.6f}"
-        # If len(spread_history) < 5, check2 remains False (skip check)
-        
-        # STEP 4 — CHECK 3: ABNORMAL VOLUME
-        # Skip during bootstrap: Binance vs Roostoo volumes are on totally different
-        # scales, so any comparison across the boundary is meaningless
+
+        # STEP 4 — CHECK 3: ABNORMAL VOLUME (ADVISORY ONLY)
+        # Volume spikes don't predict direction. Stops handle bad entries.
         check3 = False
         reason3 = ""
         if not BOOTSTRAP_DOMINANT and len(volumes) >= 5:
-            avg_volume = sum(volumes[:-1]) / len(volumes[:-1])  # Exclude current candle
+            avg_volume = sum(volumes[:-1]) / len(volumes[:-1])
             current_volume = volumes[-1]
             if avg_volume > 0 and current_volume > 3.0 * avg_volume:
-                check3 = True
-                reason3 = f"Abnormal volume: {current_volume:.0f} vs avg {avg_volume:.0f}"
-        
-        # STEP 5 — COMBINE RESULTS
-        if check1 or check2 or check3:
+                print(f"[L3] Advisory: volume spike {current_volume:.0f} vs avg {avg_volume:.0f} (not blocking)")
+
+        # STEP 5 — ONLY SPREAD WIDENING BLOCKS
+        if check2:
             # At least one check triggered — BLOCK the trade
             cooldown_until = current_time + 60   # 1 minute = 1 cycle
             consecutive_blocks += 1

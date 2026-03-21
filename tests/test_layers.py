@@ -49,8 +49,8 @@ def test_layer3_reversal_blocker_extreme_move_blocks():
 
     result = check_reversal_block(prices, volumes, spread, "BUY")
     cb_mod.BOOTSTRAP_DOMINANT = original  # Restore
-    assert result["decision"] == "BLOCK"
-    assert result["check1_extreme_move"] is True
+    # Spike check is now advisory-only — should PASS
+    assert result["decision"] == "PASS"
 
 
 def test_layer4_timeframe_returns_expected_shape():
