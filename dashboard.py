@@ -87,8 +87,10 @@ def build_html():
             entry_p = float(buy_o.get('FilledAverPrice', 0))
             exit_p = float(o.get('FilledAverPrice', 0))
             qty = float(buy_o.get('FilledQuantity', 0))
-            pnl = (exit_p - entry_p) * qty
-            pnl_pct = (exit_p - entry_p) / entry_p if entry_p > 0 else 0
+            fee_entry = entry_p * qty * 0.001  # 0.1% taker
+            fee_exit = exit_p * qty * 0.001
+            pnl = (exit_p - entry_p) * qty - fee_entry - fee_exit
+            pnl_pct = pnl / (entry_p * qty) if entry_p > 0 else 0
             trade_history.append({
                 'entry_price': entry_p,
                 'exit_price': exit_p,
