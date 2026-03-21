@@ -398,8 +398,12 @@ class TradingBot:
             f"XGB_prob={xgb_prob:.3f} threshold={min_prob} "
             f"{'PROTECT_MODE' if self.state.get('_protect_mode') else 'NORMAL'}"
         )
-        if xgb_prob < min_prob:
+        is_oversold = source in ('oversold_override', 'trending_oversold_bounce',
+                                  'rsi_oversold_bootstrap', 'bb_oversold')
+        if xgb_prob < min_prob and not is_oversold:
             return
+        if xgb_prob < min_prob and is_oversold:
+            log.info(f"Cycle {cycle}: L5 BYPASSED for oversold signal ({source})")
 
         # ══════════════════════════════════════════
         # LAYER 6: POSITION SIZING
