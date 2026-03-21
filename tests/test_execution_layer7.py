@@ -107,18 +107,18 @@ def test_component3_time_exit_logic():
     ex = TradeExecutor(client, 2, 5, state={}, save_state_fn=lambda s: None)
     # Time exit only fires if position is NEGATIVE (pnl < 0)
     # Price 79,900 < entry 80,000 → negative → should time exit
-    ex.state["exec_open_time"] = (datetime.now(timezone.utc) - timedelta(hours=9)).isoformat()
+    ex.state["exec_open_time"] = (datetime.now(timezone.utc) - timedelta(hours=9)).strftime("%Y-%m-%dT%H:%M:%S.%f")
     passed = ex._should_time_exit(80_000, 79_900)
     _print_result("COMP3 TEST1", True, passed, passed)
     assert passed
 
     # Price 80,040 > entry 80,000 → positive → should NOT time exit
-    ex.state["exec_open_time"] = (datetime.now(timezone.utc) - timedelta(hours=9)).isoformat()
+    ex.state["exec_open_time"] = (datetime.now(timezone.utc) - timedelta(hours=9)).strftime("%Y-%m-%dT%H:%M:%S.%f")
     passed = not ex._should_time_exit(80_000, 80_040)
     _print_result("COMP3 TEST2", False, not passed, passed)
     assert passed
 
-    ex.state["exec_open_time"] = (datetime.now(timezone.utc) - timedelta(hours=3)).isoformat()
+    ex.state["exec_open_time"] = (datetime.now(timezone.utc) - timedelta(hours=3)).strftime("%Y-%m-%dT%H:%M:%S.%f")
     passed = not ex._should_time_exit(80_000, 80_000)
     _print_result("COMP3 TEST3", False, not passed, passed)
     assert passed

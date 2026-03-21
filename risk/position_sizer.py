@@ -178,10 +178,11 @@ def _is_halted(state: dict) -> bool:
     if not halt_until:
         return False
     try:
-        # Compare current time to halt time.
-        return datetime.now(timezone.utc) < datetime.fromisoformat(halt_until)
-    except ValueError:
-        # If the stored time is malformed, treat as not halted.
+        # Parse without fromisoformat for Python 3.9 compatibility
+        clean = halt_until.replace("+00:00", "").replace("Z", "")
+        halt_dt = datetime.strptime(clean, "%Y-%m-%dT%H:%M:%S.%f")
+        return datetime.utcnow() < halt_dt
+    except (ValueError, TypeError):
         return False
 
 

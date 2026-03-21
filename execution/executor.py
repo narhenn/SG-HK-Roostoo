@@ -45,7 +45,23 @@ def _utc_now():
 
 
 def _iso_now():
-    return _utc_now().isoformat()
+    # Use format without +00:00 suffix for Python 3.9 compatibility
+    return _utc_now().strftime("%Y-%m-%dT%H:%M:%S.%f")
+
+
+def _parse_iso(s: str) -> datetime:
+    """Parse ISO timestamp compatible with Python 3.9 (no timezone suffix support)."""
+    if not s:
+        return _utc_now()
+    # Strip timezone suffix if present (+00:00 or Z)
+    clean = s.replace("+00:00", "").replace("Z", "")
+    try:
+        return datetime.strptime(clean, "%Y-%m-%dT%H:%M:%S.%f")
+    except ValueError:
+        try:
+            return datetime.strptime(clean, "%Y-%m-%dT%H:%M:%S")
+        except ValueError:
+            return _utc_now()
 
 
 def _write_json_line(path: str, payload: dict):
@@ -144,7 +160,7 @@ def _cooldown_active(state: dict) -> bool:
     if not cooldown_until:
         return False
     try:
-        return _utc_now() < datetime.fromisoformat(cooldown_until)
+        return datetime.utcnow() < _parse_iso(cooldown_until)
     except (ValueError, TypeError):
         return False
 
@@ -477,7 +493,7 @@ class TradeExecutor:
         if not open_time:
             return False
         try:
-            hours = (_utc_now() - datetime.fromisoformat(open_time)).total_seconds() / 3600
+            hours = (datetime.utcnow() - _parse_iso(open_time)).total_seconds() / 3600
         except (ValueError, TypeError):
             return False
         pnl_pct = (current_price - entry_price) / entry_price if entry_price > 0 else 0.0
@@ -582,7 +598,11 @@ class TradeExecutor:
             self.state["exec_open_time"] = _iso_now()
             self.state["exec_regime"] = regime
             self.state["exec_signal_source"] = signal_source
-            self.state["exec_stop"] = entry["fill_price"] - ATR_STOP_MULTIPLIER * atr_14
+            # Set initial stop based on regime (SIDEWAYS=0.7x, TRENDING=1.5x)
+            if regime == "SIDEWAYS":
+                self.state["exec_stop"] = entry["fill_price"] - 0.7 * atr_14
+            else:
+                self.state["exec_stop"] = entry["fill_price"] - ATR_STOP_MULTIPLIER * atr_14
             self.state["exec_take_profit"] = None
 
             # Also update the positions list for compatibility with main.py

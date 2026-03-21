@@ -117,25 +117,37 @@ class TradingBot:
         except Exception as e:
             log.error(f"Error fetching external data: {e}")
 
+    def _parse_time(self, s: str):
+        """Parse ISO timestamp for Python 3.9 compatibility."""
+        clean = s.replace("+00:00", "").replace("Z", "")
+        try:
+            return datetime.strptime(clean, "%Y-%m-%dT%H:%M:%S.%f")
+        except ValueError:
+            return datetime.strptime(clean, "%Y-%m-%dT%H:%M:%S")
+
     def is_halted(self) -> bool:
         """Check if bot is in halt/cooldown mode."""
         halt_until = self.state.get('halt_until')
         if halt_until:
-            if datetime.utcnow().isoformat() < halt_until:
-                return True
-            else:
-                self.state['halt_until'] = None
-                self.state['_kill_switch_fired'] = False
+            try:
+                if datetime.utcnow() < self._parse_time(halt_until):
+                    return True
+            except (ValueError, TypeError):
+                pass
+            self.state['halt_until'] = None
+            self.state['_kill_switch_fired'] = False
         return False
 
     def is_cooled_down(self) -> bool:
         """Check if post-stop-loss cooldown is active."""
         cooldown_until = self.state.get('cooldown_until')
         if cooldown_until:
-            if datetime.utcnow().isoformat() < cooldown_until:
-                return True
-            else:
-                self.state['cooldown_until'] = None
+            try:
+                if datetime.utcnow() < self._parse_time(cooldown_until):
+                    return True
+            except (ValueError, TypeError):
+                pass
+            self.state['cooldown_until'] = None
         return False
 
     def send_heartbeat(self):
@@ -240,7 +252,6 @@ class TradingBot:
             return
         if days_left <= PROTECT_DAYS_BEFORE_END and not self.has_position():
             log.info(f"Cycle {cycle}: {days_left:.1f} days left — no new positions")
-            self.candles.add_tick(price, volume, bid, ask)
             return
 
         # ── Check halts ──
@@ -413,7 +424,7 @@ class TradingBot:
             peak_capital=self.state.get('peak_equity', equity),
             trade_history=trade_history,
             regime=regime,
-            timeframe_score=tf_result['score'],
+            timeframe_score=max(tf_result['score'], 1) if tf_result['pass'] else tf_result['score'],
             signal_score=xgb_prob * 100,
             atr_usd=atr_14,
             btc_price=price,

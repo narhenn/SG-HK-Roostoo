@@ -26,7 +26,7 @@ STOP_MONITOR_INTERVAL = 15            # Trailing stop check interval (seconds)
 # 3. Delete state.json on EC2: rm -f state.json
 # 4. sudo systemctl restart bot.service
 # ══════════════════════════════════════════
-STARTING_CAPITAL = 50_000              # Testing account. Switch to 1_000_000 at 8pm SGT.
+STARTING_CAPITAL = 1_000_000           # Competition account (fallback if API sync fails)
 COMPETITION_CAPITAL = 1_000_000       # CONFIRMED via API: competition account is $1M
 BTC_PRICE_PRECISION = 2               # From exchangeInfo
 BTC_AMOUNT_PRECISION = 5              # From exchangeInfo
