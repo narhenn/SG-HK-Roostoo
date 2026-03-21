@@ -371,8 +371,22 @@ class TradeExecutor:
         entry_price = self.state.get("exec_entry_price", 0.0)
         pnl = _pnl_with_fees(entry_price, exit_price, qty)
 
-        # Update equity in shared state
-        equity = self.state.get("current_equity", STARTING_CAPITAL) + pnl["pnl_usd_net"]
+        # Sync real equity from exchange after sell (avoids drift from mid-trade sync)
+        try:
+            balance = self.client.get_balance()
+            wallet = balance.get('SpotWallet', balance.get('Data', {}))
+            if isinstance(wallet, dict) and 'USD' in wallet:
+                usd_free = float(wallet['USD'].get('Free', 0))
+                if usd_free > 0:
+                    equity = usd_free
+                    log.info(f"Post-sell equity synced from API: ${equity:,.0f}")
+                else:
+                    equity = self.state.get("current_equity", STARTING_CAPITAL) + pnl["pnl_usd_net"]
+            else:
+                equity = self.state.get("current_equity", STARTING_CAPITAL) + pnl["pnl_usd_net"]
+        except Exception:
+            # Geo-blocked on EC2 — fall back to calculated equity
+            equity = self.state.get("current_equity", STARTING_CAPITAL) + pnl["pnl_usd_net"]
         self.state["current_equity"] = equity
         peak = self.state.get("peak_equity", equity)
         if equity > peak:
