@@ -80,7 +80,7 @@ def check_reversal_block(prices, volumes, spread, signal):
         # STEP 5 — COMBINE RESULTS
         if check1 or check2 or check3:
             # At least one check triggered — BLOCK the trade
-            cooldown_until = current_time + 120  # 2 minutes = 2 cycles
+            cooldown_until = current_time + 60   # 1 minute = 1 cycle
             consecutive_blocks += 1
             
             # Combine reasons from all triggered checks
