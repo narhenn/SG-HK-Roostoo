@@ -431,7 +431,7 @@ class TradingBot:
             trade_history=trade_history,
             regime=regime,
             timeframe_score=max(tf_result['score'], 1) if tf_result['pass'] else tf_result['score'],
-            signal_score=xgb_prob * 100,
+            signal_score=80,
             atr_usd=atr_14,
             btc_price=price,
             current_position_open=self.has_position(),

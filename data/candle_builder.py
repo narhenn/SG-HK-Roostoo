@@ -35,7 +35,11 @@ def _load_tick_cache() -> list:
                 line = line.strip()
                 if line:
                     t = json.loads(line)
-                    t['timestamp'] = datetime.fromisoformat(t['timestamp'])
+                    ts = t['timestamp'].replace('+00:00', '').replace('Z', '')
+                    try:
+                        t['timestamp'] = datetime.strptime(ts, '%Y-%m-%dT%H:%M:%S.%f')
+                    except ValueError:
+                        t['timestamp'] = datetime.strptime(ts, '%Y-%m-%dT%H:%M:%S')
                     ticks.append(t)
     except Exception:
         log.exception("Failed to load tick cache")
@@ -136,8 +140,8 @@ class CandleBuilder:
             self.ticks = self.ticks[-1440:]
             _truncate_tick_cache()
 
-        # Rebuild candles every 60 ticks (every hour)
-        if len(self.ticks) % 60 == 0:
+        # Rebuild candles every 15 ticks (~15 minutes)
+        if len(self.ticks) % 15 == 0:
             self._rebuild_from_ticks()
 
     def _rebuild_from_ticks(self):

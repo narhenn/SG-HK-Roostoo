@@ -53,7 +53,7 @@ EMA_MID = 21
 EMA_SLOW = 50
 # RSI (mean-reversion in sideways)
 RSI_PERIOD = 14
-RSI_OVERSOLD = 45                  # Buy on dips (48 was firing constantly, 45 catches real dips)
+RSI_OVERSOLD = 35                  # Buy on real dips only (45 was too loose)
 RSI_OVERBOUGHT = 58                # Sell on genuine strength (52 was constant noise)
 # MACD
 MACD_FAST = 12
@@ -89,15 +89,15 @@ DRAWDOWN_LEVEL_2 = 0.05            # 5% → reduce to 15% max
 DRAWDOWN_LEVEL_3 = 0.08            # 8% → halt 4 hours
 DRAWDOWN_LEVEL_4 = 0.10            # 10% → emergency mode
 DRAWDOWN_KILL = 0.15               # 15% → kill switch
-SHARPE_KILL = -1.0                 # Negative Sharpe → kill switch (-0.5 triggers on 2 losses in 3 trades)
-HALT_HOURS = 4                     # Hours to halt after L3 drawdown
-KILL_HALT_HOURS = 24               # Hours to halt after kill switch
+SHARPE_KILL = -2.0                 # Negative Sharpe → kill switch
+HALT_HOURS = 1                     # Hours to halt after L3 drawdown
+KILL_HALT_HOURS = 4                # Hours to halt after kill switch
 
 # ── Layer 7: Execution ──
 LIMIT_ORDER_TIMEOUT = 120          # Cancel unfilled limit after 2 min (seconds)
 BREAKOUT_AGGRESSIVE_OFFSET = 0.0002  # bid + 0.02% for breakout entries
 ATR_STOP_MULTIPLIER = 1.5          # Trailing stop = 1.5x ATR below peak
-TIME_EXIT_HOURS = 4                # Close flat positions after 4 hours (faster turnover)
+TIME_EXIT_HOURS = 8                # Close flat positions after 8 hours
 FLAT_THRESHOLD = 0.002             # <0.2% P&L = "flat"
 COOLDOWN_AFTER_STOP = 600          # 10 min cooldown after stop-loss (seconds)
 PARTIAL_FILL_THRESHOLD = 0.5       # >50% filled = keep, <50% = sell back
@@ -108,7 +108,7 @@ TAKER_FEE = 0.001                  # 0.1% market order fee
 
 # ── Competition Timeline ──
 CONSERVATIVE_DAYS = 0              # Disabled — no time to waste in 10-day competition
-PROTECT_DAYS_BEFORE_END = 2        # Last 2 days: tighten stops
+PROTECT_DAYS_BEFORE_END = 0.5      # Last 12 hours: tighten stops
 FINAL_DAY_CLOSE_HOUR = 20          # Close all by hour 20 on last day
 
 # ── Urgency Mode (prevents score=0 from zero trades) ──
@@ -131,6 +131,9 @@ LOG_LEVEL = "INFO"
 
 
 # ── Multi-coin Hybrid (disabled until BTC bot confirmed working) ──
+TELEGRAM_TOKEN = "8742026308:AAHDWHuAX8W4YJKAg13Wq48eCAKYXVRfcnk"
+TELEGRAM_CHAT_ID = "-5271669161"
+
 ENABLE_MULTICOIN = False        # Flip to True after BTC bot verified
 ALT_CAPITAL_PCT = 0.30          # 30% of capital for alts
 ALT_COINS_COUNT = 2             # Top 2 momentum coins

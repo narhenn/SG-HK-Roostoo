@@ -19,6 +19,7 @@ if PROJECT_ROOT not in sys.path:
 
 from config import (
     KELLY_FRACTION,
+    KELLY_MIN_POSITION,
     MAX_POSITION_PCT,
     MAX_LOSS_PER_TRADE,
     RISK_PER_TRADE,
@@ -95,7 +96,7 @@ def _quarter_kelly_size(trade_history: list, current_capital: float) -> tuple:
     # If we have fewer than 20 trades, we do a safe "cold start" default.
     # These numbers (0.55 win rate and 1.3 reward/risk) come from the spec.
     # Example: if we win 55% and win 1.3x what we lose, Kelly = 0.269.
-    if len(recent) < 20:
+    if len(recent) < 5:
         # 0.269 means 26.9% full Kelly; we will later take only 25% of that.
         kelly = 0.269
     else:
@@ -510,6 +511,9 @@ def compute_position_size(
 
     # If final size is negative for any reason, clamp to zero.
     final_size = max(final_size, 0.0)
+    # Enforce KELLY_MIN_POSITION as a floor
+    if final_size > 0:
+        final_size = max(final_size, KELLY_MIN_POSITION * current_capital)
     # Save state after sizing decision for crash safety.
     _save_state(state, save_state_fn)
     return final_size

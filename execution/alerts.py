@@ -5,9 +5,7 @@ Owner: Narhen
 
 import requests
 from datetime import datetime
-
-TELEGRAM_TOKEN = "8742026308:AAHDWHuAX8W4YJKAg13Wq48eCAKYXVRfcnk"
-TELEGRAM_CHAT_ID = "-5271669161"
+from config import TELEGRAM_TOKEN, TELEGRAM_CHAT_ID
 
 
 def send_alert(message: str):

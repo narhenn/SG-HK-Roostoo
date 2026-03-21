@@ -15,9 +15,11 @@ log = logging.getLogger(__name__)
 def save_state(state: dict):
     """Save bot state to JSON file."""
     state['last_saved'] = datetime.now(timezone.utc).isoformat()
+    tmp_file = STATE_FILE + '.tmp'
     try:
-        with open(STATE_FILE, 'w') as f:
+        with open(tmp_file, 'w') as f:
             json.dump(state, f, indent=2, default=str)
+        os.rename(tmp_file, STATE_FILE)
     except Exception:
         log.exception("Failed to save state")
 

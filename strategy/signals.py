@@ -181,4 +181,10 @@ def generate_signal(df: pd.DataFrame, regime: str, urgency: bool = False) -> dic
     elif regime == 'SIDEWAYS':
         return _sideways_signals(df, urgency=urgency)
     else:  # VOLATILE
+        # Allow oversold bounce even in VOLATILE — don't waste entire days
+        close = df['close']
+        rsi_series = _rsi(close, RSI_PERIOD)
+        rsi_val = rsi_series.iloc[-1]
+        if rsi_val < 30:
+            return {'direction': 'BUY', 'source': 'volatile_oversold'}
         return {'direction': 'HOLD', 'source': 'volatile_regime_skip'}

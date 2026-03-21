@@ -12,9 +12,7 @@ import time
 import logging
 import os
 import requests
-
-TELEGRAM_TOKEN = "8742026308:AAHDWHuAX8W4YJKAg13Wq48eCAKYXVRfcnk"
-TELEGRAM_CHAT_ID = "-5271669161"
+from config import TELEGRAM_TOKEN, TELEGRAM_CHAT_ID
 CHECK_INTERVAL = 120  # Check every 2 minutes
 RESTART_DELAY = 30    # Wait before restart to avoid crash loops
 BOT_DIR = os.path.dirname(os.path.abspath(__file__))
