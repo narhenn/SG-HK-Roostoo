@@ -10,6 +10,9 @@ import requests
 from config import API_KEY, SECRET_KEY, BASE_URL
 
 
+API_TIMEOUT = 10  # seconds — prevent indefinite hangs
+
+
 class RoostooClient:
     def __init__(self):
         self.api_key = API_KEY
@@ -48,13 +51,13 @@ class RoostooClient:
 
     def get_server_time(self) -> dict:
         """Get server time to check connectivity."""
-        resp = self.session.get(f"{self.base_url}/v3/serverTime")
+        resp = self.session.get(f"{self.base_url}/v3/serverTime", timeout=API_TIMEOUT)
         resp.raise_for_status()
         return resp.json()
 
     def get_exchange_info(self) -> dict:
         """Get all trading pairs, precision settings, min order amounts."""
-        resp = self.session.get(f"{self.base_url}/v3/exchangeInfo")
+        resp = self.session.get(f"{self.base_url}/v3/exchangeInfo", timeout=API_TIMEOUT)
         resp.raise_for_status()
         return resp.json()
 
@@ -68,7 +71,7 @@ class RoostooClient:
         params = {"timestamp": self._timestamp()}
         if pair:
             params["pair"] = pair
-        resp = self.session.get(f"{self.base_url}/v3/ticker", params=params)
+        resp = self.session.get(f"{self.base_url}/v3/ticker", params=params, timeout=API_TIMEOUT)
         resp.raise_for_status()
         return resp.json()
 
@@ -81,7 +84,8 @@ class RoostooClient:
         resp = self.session.get(
             f"{self.base_url}/v3/balance",
             params=params,
-            headers=headers
+            headers=headers,
+            timeout=API_TIMEOUT,
         )
         resp.raise_for_status()
         return resp.json()
@@ -93,7 +97,8 @@ class RoostooClient:
         resp = self.session.get(
             f"{self.base_url}/v3/pending_count",
             params=params,
-            headers=headers
+            headers=headers,
+            timeout=API_TIMEOUT,
         )
         resp.raise_for_status()
         return resp.json()
@@ -128,7 +133,8 @@ class RoostooClient:
         resp = self.session.post(
             f"{self.base_url}/v3/place_order",
             data=params,
-            headers=headers
+            headers=headers,
+            timeout=API_TIMEOUT,
         )
         resp.raise_for_status()
         return resp.json()
@@ -148,7 +154,8 @@ class RoostooClient:
         resp = self.session.post(
             f"{self.base_url}/v3/query_order",
             data=params,
-            headers=headers
+            headers=headers,
+            timeout=API_TIMEOUT,
         )
         resp.raise_for_status()
         return resp.json()
@@ -165,7 +172,8 @@ class RoostooClient:
         resp = self.session.post(
             f"{self.base_url}/v3/cancel_order",
             data=params,
-            headers=headers
+            headers=headers,
+            timeout=API_TIMEOUT,
         )
         resp.raise_for_status()
         return resp.json()

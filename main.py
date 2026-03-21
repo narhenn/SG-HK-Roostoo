@@ -390,34 +390,22 @@ class TradingBot:
             return
 
         # ══════════════════════════════════════════
-        # LAYER 5: XGBOOST CONFIRMATION
+        # LAYER 5: XGBOOST — BYPASSED
+        # Model trained on Binance data, not Roostoo. No edge here.
+        # Still compute for logging but never block trades.
         # ══════════════════════════════════════════
+        xgb_prob = 0.0
         if _USE_PRANATI_MODEL:
-            price_history = df_1h.to_dict('records')
-            current_spread = (ask - bid) / price if price > 0 and ask > 0 and bid > 0 else 0.001
-            xgb_decision, xgb_prob = get_xgboost_signal(
-                price_history, breadth=self.breadth,
-                spread_proxy=current_spread, threshold=XGBOOST_MIN_PROBABILITY
-            )
-        else:
-            features = engineer_features(df_1h)
-            xgb_prob = xgboost_confirm(features)
-
-        min_prob = 0.70 if self.state.get('_protect_mode') else XGBOOST_MIN_PROBABILITY
-        log.info(
-            f"Cycle {cycle}: L5 {'PASS' if xgb_prob >= min_prob else 'BLOCKED'} | "
-            f"XGB_prob={xgb_prob:.3f} threshold={min_prob} "
-            f"{'PROTECT_MODE' if self.state.get('_protect_mode') else 'NORMAL'}"
-        )
-        is_oversold = source in ('oversold_override', 'trending_oversold_bounce',
-                                  'rsi_oversold_bootstrap', 'bb_oversold')
-        # In critical urgency (day 7+, 0 trades), urgency_bounce also bypasses L5
-        if source == 'urgency_bounce' and critical_urgency:
-            is_oversold = True
-        if xgb_prob < min_prob and not is_oversold:
-            return
-        if xgb_prob < min_prob and is_oversold:
-            log.info(f"Cycle {cycle}: L5 BYPASSED for oversold signal ({source})")
+            try:
+                price_history = df_1h.to_dict('records')
+                current_spread = (ask - bid) / price if price > 0 and ask > 0 and bid > 0 else 0.001
+                _, xgb_prob = get_xgboost_signal(
+                    price_history, breadth=self.breadth,
+                    spread_proxy=current_spread, threshold=XGBOOST_MIN_PROBABILITY
+                )
+            except Exception:
+                xgb_prob = 0.0
+        log.info(f"Cycle {cycle}: L5 BYPASSED (advisory only) | XGB_prob={xgb_prob:.3f}")
 
         # ══════════════════════════════════════════
         # LAYER 6: POSITION SIZING

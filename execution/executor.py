@@ -461,22 +461,22 @@ class TradeExecutor:
     def _evaluate_trailing(self, entry_price: float, current_price: float,
                           atr_14: float, regime: str, current_stop: float):
         if regime == "SIDEWAYS":
-            # R:R = 1:2+ for scoring formula (small losses, bigger wins)
-            # SL = 0.7x ATR (tight — protects Calmar/Sortino)
+            # R:R = 1:1.5 for scoring formula (wider stop avoids noise clips)
+            # SL = 1.0x ATR (BTC noise is ~0.7x ATR, need to be outside it)
             # TP = 1.5x ATR (lets winners run)
             take_profit = entry_price + 1.5 * atr_14
-            initial_stop = entry_price - 0.7 * atr_14
+            initial_stop = entry_price - 1.0 * atr_14
             profit = current_price - entry_price
 
             # Trailing logic for mean reversion:
-            # - Once 0.5x ATR in profit: move stop to breakeven
-            # - Once 0.7x ATR in profit: trail at 0.5x ATR below price
+            # - Once 0.7x ATR in profit: move stop to breakeven
+            # - Once 1.0x ATR in profit: trail at 0.7x ATR below price
             # This prevents winners from turning into losers
-            if profit >= 0.7 * atr_14:
-                # Trailing mode: stop follows price at 0.5x ATR distance
-                trailing_stop = current_price - 0.5 * atr_14
+            if profit >= 1.0 * atr_14:
+                # Trailing mode: stop follows price at 0.7x ATR distance
+                trailing_stop = current_price - 0.7 * atr_14
                 stop = max(current_stop, trailing_stop)
-            elif profit >= 0.5 * atr_14:
+            elif profit >= 0.7 * atr_14:
                 # Breakeven mode: don't lose money on a winning trade
                 stop = max(current_stop, entry_price)
             else:
@@ -606,9 +606,9 @@ class TradeExecutor:
             self.state["exec_open_time"] = _iso_now()
             self.state["exec_regime"] = regime
             self.state["exec_signal_source"] = signal_source
-            # Set initial stop based on regime (SIDEWAYS=0.7x, TRENDING=1.5x)
+            # Set initial stop based on regime (SIDEWAYS=1.0x, TRENDING=1.5x)
             if regime == "SIDEWAYS":
-                self.state["exec_stop"] = entry["fill_price"] - 0.7 * atr_14
+                self.state["exec_stop"] = entry["fill_price"] - 1.0 * atr_14
             else:
                 self.state["exec_stop"] = entry["fill_price"] - ATR_STOP_MULTIPLIER * atr_14
             self.state["exec_take_profit"] = None

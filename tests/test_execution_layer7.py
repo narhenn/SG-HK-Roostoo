@@ -80,15 +80,15 @@ def test_component2_trailing_stop_logic():
     _print_result("COMP2 TEST3", "TRAILING_STOP", f"{reason}", passed)
     assert passed
 
-    # SIDEWAYS: TP=1.5*ATR=750, SL=0.7*ATR=350
+    # SIDEWAYS: TP=1.5*ATR=750, SL=1.0*ATR=500
     # Price 80,800 = entry+800 > TP(80,750) → take profit
     reason, stop, _ = ex._evaluate_trailing(80_000, 80_800, 500, "SIDEWAYS", 0)
     passed = reason == "FIXED_TAKE_PROFIT"
     _print_result("COMP2 TEST4", "FIXED_TAKE_PROFIT", f"{reason}", passed)
     assert passed
 
-    # Price 79,600 = entry-400 > SL(79,650) but close. Try 79,600 < 79,650 → stop
-    reason, stop, _ = ex._evaluate_trailing(80_000, 79_600, 500, "SIDEWAYS", 0)
+    # Price 79,400 = entry-600 < SL(79,500) → stop
+    reason, stop, _ = ex._evaluate_trailing(80_000, 79_400, 500, "SIDEWAYS", 0)
     passed = reason == "STOP_LOSS_SIDEWAYS"
     _print_result("COMP2 TEST5", "STOP_LOSS_SIDEWAYS", f"{reason}", passed)
     assert passed

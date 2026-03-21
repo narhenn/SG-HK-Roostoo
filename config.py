@@ -107,12 +107,12 @@ MAKER_FEE = 0.0005                 # 0.05% limit order fee
 TAKER_FEE = 0.001                  # 0.1% market order fee
 
 # ── Competition Timeline ──
-CONSERVATIVE_DAYS = 2              # Days 1-2: 50% position sizes
+CONSERVATIVE_DAYS = 0              # Disabled — no time to waste in 10-day competition
 PROTECT_DAYS_BEFORE_END = 2        # Last 2 days: tighten stops
 FINAL_DAY_CLOSE_HOUR = 20          # Close all by hour 20 on last day
 
 # ── Urgency Mode (prevents score=0 from zero trades) ──
-URGENCY_DAYS = 4                   # After 4 days with 0 trades, relax entry criteria
+URGENCY_DAYS = 2                   # After 2 days with 0 trades, relax entry criteria
 URGENCY_RSI_TRENDING = 38          # RSI threshold in trending urgency (normally 30)
 URGENCY_RSI_TRENDING_NOCONFIRM = 42  # RSI threshold in trending critical urgency (no confirmation)
 CRITICAL_URGENCY_DAYS = 7          # After 7 days: bypass XGBoost for urgency signals
