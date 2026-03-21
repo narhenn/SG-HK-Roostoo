@@ -73,8 +73,27 @@ def build_html():
     except Exception:
         filled_orders = []
 
-    # Build trade history from filled orders (pairs of BUY→SELL)
-    trade_history = state.get('trade_history', [])
+    # Build trade history from filled orders (pair BUY→SELL)
+    trade_history = []
+    buys_stack = []
+    for o in filled_orders:
+        side = (o.get('Side') or '').upper()
+        if side == 'BUY':
+            buys_stack.append(o)
+        elif side == 'SELL' and buys_stack:
+            buy_o = buys_stack.pop(0)
+            entry_p = float(buy_o.get('FilledAverPrice', 0))
+            exit_p = float(o.get('FilledAverPrice', 0))
+            qty = float(buy_o.get('FilledQuantity', 0))
+            pnl = (exit_p - entry_p) * qty
+            pnl_pct = (exit_p - entry_p) / entry_p if entry_p > 0 else 0
+            trade_history.append({
+                'entry_price': entry_p,
+                'exit_price': exit_p,
+                'pnl': pnl,
+                'pnl_pct': pnl_pct,
+                'side': 'BUY→SELL',
+            })
     positions = []
     if btc_held > 0.00001:
         # We have an open position — find the last BUY
