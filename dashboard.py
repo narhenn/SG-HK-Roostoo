@@ -96,6 +96,7 @@ def build_html():
                 'exit_price': exit_p,
                 'pnl': pnl,
                 'pnl_pct': pnl_pct,
+                'fees': fee_entry + fee_exit,
                 'side': 'BUY→SELL',
             })
     positions = []
@@ -248,6 +249,7 @@ def build_html():
                 <td>${t.get('exit_price', 0):,.2f}</td>
                 <td style="color: {color}">{pnl_pct:+.2%}</td>
                 <td style="color: {color}">${pnl:+,.2f}</td>
+                <td style="color: #FF9800">${t.get('fees', 0):,.2f}</td>
                 <td>{t.get('duration_seconds', 0):.0f}s</td>
             </tr>"""
         trades_html = f"""
@@ -255,7 +257,7 @@ def build_html():
             <h3>Recent Trades</h3>
             <table>
                 <thead>
-                    <tr><th>Pair</th><th>Side</th><th>Entry</th><th>Exit</th><th>P&L %</th><th>P&L $</th><th>Duration</th></tr>
+                    <tr><th>Pair</th><th>Side</th><th>Entry</th><th>Exit</th><th>P&L %</th><th>P&L $</th><th>Fees</th><th>Duration</th></tr>
                 </thead>
                 <tbody>{rows}</tbody>
             </table>
