@@ -99,7 +99,7 @@ BREAKOUT_AGGRESSIVE_OFFSET = 0.0002  # bid + 0.02% for breakout entries
 ATR_STOP_MULTIPLIER = 1.5          # Trailing stop = 1.5x ATR below peak
 TIME_EXIT_HOURS = 4                # Close flat positions after 4 hours (faster turnover)
 FLAT_THRESHOLD = 0.002             # <0.2% P&L = "flat"
-COOLDOWN_AFTER_STOP = 3600         # 1 hour cooldown after stop-loss (seconds)
+COOLDOWN_AFTER_STOP = 600          # 10 min cooldown after stop-loss (seconds)
 PARTIAL_FILL_THRESHOLD = 0.5       # >50% filled = keep, <50% = sell back
 
 # ── Layer 7: Fees ──
