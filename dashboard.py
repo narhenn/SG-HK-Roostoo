@@ -47,11 +47,47 @@ def get_recent_logs(n=20):
 
 def build_html():
     state = load_state()
-    positions = state.get('positions', [])
-    trade_history = state.get('trade_history', [])
     from config import STARTING_CAPITAL
-    peak_equity = state.get('peak_equity', STARTING_CAPITAL)
-    current_equity = state.get('current_equity', STARTING_CAPITAL)
+
+    # Fetch live portfolio from Roostoo API (same account as EC2 bot)
+    try:
+        client = RoostooClient()
+        balance = client.get_balance()
+        wallet = balance.get('SpotWallet', balance.get('Data', {}))
+        if isinstance(wallet, dict) and 'USD' in wallet:
+            current_equity = float(wallet['USD'].get('Free', 0))
+            # Check if we hold BTC (open position)
+            btc_held = float(wallet.get('BTC', {}).get('Free', 0)) if 'BTC' in wallet else 0
+        else:
+            current_equity = state.get('current_equity', STARTING_CAPITAL)
+            btc_held = 0
+    except Exception:
+        current_equity = state.get('current_equity', STARTING_CAPITAL)
+        btc_held = 0
+
+    # Fetch order history from API
+    try:
+        orders_resp = client.query_orders(pair='BTC/USD')
+        order_list = orders_resp.get('OrderMatched', []) if isinstance(orders_resp, dict) else []
+        filled_orders = [o for o in order_list if (o.get('Status') or '').upper() == 'FILLED']
+    except Exception:
+        filled_orders = []
+
+    # Build trade history from filled orders (pairs of BUY→SELL)
+    trade_history = state.get('trade_history', [])
+    positions = []
+    if btc_held > 0.00001:
+        # We have an open position — find the last BUY
+        buys = [o for o in filled_orders if (o.get('Side') or '').upper() == 'BUY']
+        if buys:
+            last_buy = buys[-1]
+            positions = [{
+                'entry_price': float(last_buy.get('FilledAverPrice', 0)),
+                'quantity': btc_held,
+                'entry_time': last_buy.get('CreateTime', ''),
+            }]
+
+    peak_equity = max(state.get('peak_equity', STARTING_CAPITAL), current_equity)
     cycle_count = state.get('cycle_count', 0)
     halt_until = state.get('halt_until')
 
@@ -74,7 +110,6 @@ def build_html():
 
     # Try to get live data
     try:
-        client = RoostooClient()
         raw_ticker = client.get_ticker(TRADING_PAIR)
         if isinstance(raw_ticker, dict) and 'Data' in raw_ticker:
             ticker = raw_ticker['Data'].get(TRADING_PAIR, {})
