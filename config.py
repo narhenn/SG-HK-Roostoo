@@ -111,6 +111,12 @@ CONSERVATIVE_DAYS = 2              # Days 1-2: 50% position sizes
 PROTECT_DAYS_BEFORE_END = 2        # Last 2 days: tighten stops
 FINAL_DAY_CLOSE_HOUR = 20          # Close all by hour 20 on last day
 
+# ── Urgency Mode (prevents score=0 from zero trades) ──
+URGENCY_DAYS = 4                   # After 4 days with 0 trades, relax entry criteria
+URGENCY_RSI_TRENDING = 38          # RSI threshold in trending urgency (normally 30)
+URGENCY_RSI_TRENDING_NOCONFIRM = 42  # RSI threshold in trending critical urgency (no confirmation)
+CRITICAL_URGENCY_DAYS = 7          # After 7 days: bypass XGBoost for urgency signals
+
 # ── Paths ──
 DATA_DIR = "data"
 MODELS_DIR = "models"

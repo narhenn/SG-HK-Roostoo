@@ -90,14 +90,14 @@ def check_reversal_block(prices, volumes, spread, signal):
             if check3: reasons.append(reason3)
             combined_reason = "; ".join(reasons)
             
-            print(f"[L3] BLOCKED — {combined_reason}. Cooldown: 120s. Consecutive blocks: {consecutive_blocks}")
+            print(f"[L3] BLOCKED — {combined_reason}. Cooldown: 60s. Consecutive blocks: {consecutive_blocks}")
             return {
                 "decision": "BLOCK",
                 "reason": combined_reason,
                 "check1_extreme_move": check1,
                 "check2_spread": check2,
                 "check3_volume": check3,
-                "cooldown_remaining": 120
+                "cooldown_remaining": 60
             }
         else:
             # All checks passed — ALLOW the trade

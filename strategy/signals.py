@@ -16,6 +16,7 @@ from config import (
     EMA_FAST, EMA_MID, EMA_SLOW,
     RSI_PERIOD, RSI_OVERSOLD, RSI_OVERBOUGHT,
     MACD_FAST, MACD_SLOW, MACD_SIGNAL,
+    URGENCY_RSI_TRENDING, URGENCY_RSI_TRENDING_NOCONFIRM,
 )
 
 log = logging.getLogger(__name__)
@@ -42,7 +43,7 @@ def _macd(close: pd.Series):
     return macd_line, signal_line, histogram
 
 
-def _trending_signals(df: pd.DataFrame) -> dict:
+def _trending_signals(df: pd.DataFrame, urgency: bool = False) -> dict:
     """Momentum signals for trending regime."""
     close = df['close']
     current_price = close.iloc[-1]
@@ -69,13 +70,28 @@ def _trending_signals(df: pd.DataFrame) -> dict:
     macd_bullish = histogram.iloc[-1] > 0 and histogram.iloc[-1] > histogram.iloc[-2]
     macd_bearish = histogram.iloc[-1] < 0 and histogram.iloc[-1] < histogram.iloc[-2]
 
-    # Extreme oversold override — in a bear TRENDING regime, RSI < 30 is
-    # capitulation. Generate BUY for bounce trade even against the trend.
-    # Without this, TRENDING + bear market = only SELL signals = stuck forever.
+    # Oversold bounce entries — catches dips in bear TRENDING regimes.
+    # Without these, TRENDING + bear market = only SELL signals = stuck forever.
     rsi_series = _rsi(close, RSI_PERIOD)
     rsi_val = rsi_series.iloc[-1]
+
+    # Tier 1: RSI < 30 = capitulation. High conviction, no confirmation needed.
     if rsi_val < 30:
         return {'direction': 'BUY', 'source': 'trending_oversold_bounce',
+                'macd_confirms': False}
+
+    # Tier 2: RSI < 38 with momentum confirmation (RSI turning up).
+    # Standard quant pullback entry — catches moderate dips while filtering
+    # falling knives via the turn confirmation.
+    if rsi_val < URGENCY_RSI_TRENDING and len(rsi_series) >= 2:
+        if rsi_series.iloc[-1] > rsi_series.iloc[-2]:
+            return {'direction': 'BUY', 'source': 'trending_oversold_bounce',
+                    'macd_confirms': False}
+
+    # Tier 3 (urgency only): RSI < 42 without confirmation.
+    # Activated after URGENCY_DAYS with 0 trades to prevent score=0.
+    if urgency and rsi_val < URGENCY_RSI_TRENDING_NOCONFIRM:
+        return {'direction': 'BUY', 'source': 'urgency_bounce',
                 'macd_confirms': False}
 
     # Decision
@@ -96,7 +112,7 @@ def _trending_signals(df: pd.DataFrame) -> dict:
                 'macd_confirms': False}
 
 
-def _sideways_signals(df: pd.DataFrame) -> dict:
+def _sideways_signals(df: pd.DataFrame, urgency: bool = False) -> dict:
     """Mean-reversion signals for sideways regime."""
     close = df['close']
     current_price = close.iloc[-1]
@@ -126,27 +142,33 @@ def _sideways_signals(df: pd.DataFrame) -> dict:
             return {'direction': 'SELL', 'source': 'rsi_overbought_bootstrap'}
         return {'direction': 'HOLD', 'source': 'bootstrap_stale'}
 
+    # In urgency mode, widen RSI threshold by 3 to catch more entries
+    rsi_buy = RSI_OVERSOLD + 3 if urgency else RSI_OVERSOLD
+    rsi_sell = RSI_OVERBOUGHT - 3 if urgency else RSI_OVERBOUGHT
+
     # Decision — BB touch alone is sufficient in SIDEWAYS
     # Price below lower BB is the oversold signal; RSI confirms but doesn't gate
     if current_price <= lower_band:
         return {'direction': 'BUY', 'source': 'bb_oversold'}
-    elif rsi_val < RSI_OVERSOLD or z_score < -1.5:
-        return {'direction': 'BUY', 'source': 'mean_reversion_buy'}
+    elif rsi_val < rsi_buy or z_score < -1.5:
+        source = 'urgency_bounce' if urgency and rsi_val >= RSI_OVERSOLD else 'mean_reversion_buy'
+        return {'direction': 'BUY', 'source': source}
     elif current_price >= upper_band:
         return {'direction': 'SELL', 'source': 'bb_overbought'}
-    elif rsi_val > RSI_OVERBOUGHT or z_score > 1.5:
+    elif rsi_val > rsi_sell or z_score > 1.5:
         return {'direction': 'SELL', 'source': 'mean_reversion_sell'}
     else:
         return {'direction': 'HOLD', 'source': 'no_signal'}
 
 
-def generate_signal(df: pd.DataFrame, regime: str) -> dict:
+def generate_signal(df: pd.DataFrame, regime: str, urgency: bool = False) -> dict:
     """
     Layer 2: Generate trading signal based on current regime.
 
     Args:
         df: DataFrame with OHLCV columns
         regime: 'TRENDING' | 'SIDEWAYS' | 'VOLATILE' (from Layer 1)
+        urgency: True if no trades after URGENCY_DAYS (relaxes thresholds)
 
     Returns:
         {'direction': 'BUY'/'SELL'/'HOLD', 'source': str}
@@ -155,8 +177,8 @@ def generate_signal(df: pd.DataFrame, regime: str) -> dict:
         return {'direction': 'HOLD', 'source': 'insufficient_data'}
 
     if regime == 'TRENDING':
-        return _trending_signals(df)
+        return _trending_signals(df, urgency=urgency)
     elif regime == 'SIDEWAYS':
-        return _sideways_signals(df)
+        return _sideways_signals(df, urgency=urgency)
     else:  # VOLATILE
         return {'direction': 'HOLD', 'source': 'volatile_regime_skip'}

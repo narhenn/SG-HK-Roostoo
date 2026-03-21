@@ -34,6 +34,7 @@ from config import (
     COOLDOWN_AFTER_STOP,
     MAKER_FEE,
     STARTING_CAPITAL,
+    BTC_MIN_ORDER,
 )
 
 TRADES_LOG_FILE = "trades_log.json"
@@ -119,11 +120,15 @@ def _pnl_with_fees(entry_price: float, exit_price: float, qty: float) -> dict:
     fee_exit = exit_price * qty * TAKER_FEE  # Worst case: taker on both sides
     total_fees = fee_entry + fee_exit
     net_pnl = gross_pnl - total_fees
-    pnl_pct = (exit_price - entry_price) / entry_price if entry_price > 0 else 0
+    pnl_pct_gross = (exit_price - entry_price) / entry_price if entry_price > 0 else 0
+    # Net pnl_pct accounts for fees — use this for Kelly sizing (gross overestimates edge)
+    notional = entry_price * qty
+    pnl_pct_net = net_pnl / notional if notional > 0 else 0
     return {
         "pnl_usd_gross": gross_pnl,
         "pnl_usd_net": net_pnl,
-        "pnl_pct": pnl_pct,
+        "pnl_pct": pnl_pct_gross,
+        "pnl_pct_net": pnl_pct_net,
         "fees_paid_usd": total_fees,
     }
 
@@ -203,7 +208,7 @@ class TradeExecutor:
             self.state['trade_history'] = []
         self.state['trade_history'].append({
             'pnl': entry.get('pnl_usd_net', 0),
-            'pnl_pct': entry.get('pnl_pct', 0),
+            'pnl_pct': entry.get('pnl_pct_net', entry.get('pnl_pct', 0)),
             'exit_time': entry.get('timestamp', ''),
             'exit_reason': entry.get('exit_reason', ''),
             'entry_price': entry.get('entry_price', 0),
@@ -243,6 +248,9 @@ class TradeExecutor:
         qty = _calc_btc_qty(final_position_size_usd, current_btc_price, self.amount_precision)
         if qty == 0:
             self._log_event("Position too small after rounding, skipping")
+            return None
+        if qty * current_btc_price < BTC_MIN_ORDER:
+            self._log_event(f"Order ${qty * current_btc_price:.2f} below BTC_MIN_ORDER ${BTC_MIN_ORDER}")
             return None
 
         limit_price = _entry_price_for_signal(current_bid, current_ask, signal_source, self.price_precision)

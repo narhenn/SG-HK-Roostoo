@@ -27,6 +27,7 @@ from config import (
     ADX_TREND_THRESHOLD, ADX_NOTREND_THRESHOLD,
     CONSERVATIVE_DAYS,
     ENABLE_MULTICOIN, ALT_CAPITAL_PCT,
+    URGENCY_DAYS, CRITICAL_URGENCY_DAYS,
 )
 from roostoo_client import RoostooClient
 from data.candle_builder import CandleBuilder
@@ -244,7 +245,7 @@ class TradingBot:
         self.candles.add_tick(price, volume, bid, ask)
 
         # ── Competition end-date protection ──
-        competition_end = datetime(2026, 3, 31, 23, 59)
+        competition_end = datetime(2026, 3, 31, 12, 0)  # 8pm SGT = 12pm UTC
         days_left = (competition_end - datetime.utcnow()).total_seconds() / 86400
         if days_left <= 1 and self.has_position():
             log.info(f"Cycle {cycle}: FINAL DAY — closing position to lock score")
@@ -286,10 +287,20 @@ class TradingBot:
             f"F&G={self.fear_greed} Breadth={self.breadth:.2f} | Price=${price:.2f}"
         )
 
+        # ── Urgency detection: prevent score=0 from zero trades ──
+        competition_start = datetime(2026, 3, 21, 12, 0)  # 8pm SGT = 12pm UTC
+        trade_count = len(self.state.get('trade_history', []))
+        days_in = (datetime.utcnow() - competition_start).total_seconds() / 86400
+        urgency = trade_count == 0 and days_in > URGENCY_DAYS
+        critical_urgency = trade_count == 0 and days_in > CRITICAL_URGENCY_DAYS
+        if urgency:
+            log.info(f"Cycle {cycle}: URGENCY MODE — day {days_in:.1f}, 0 trades"
+                     f"{' (CRITICAL)' if critical_urgency else ''}")
+
         # ══════════════════════════════════════════
         # LAYER 2: SIGNAL GENERATION
         # ══════════════════════════════════════════
-        signal = generate_signal(df_1h, regime)
+        signal = generate_signal(df_1h, regime, urgency=urgency)
         direction = signal['direction']
         source = signal['source']
 
@@ -400,6 +411,9 @@ class TradingBot:
         )
         is_oversold = source in ('oversold_override', 'trending_oversold_bounce',
                                   'rsi_oversold_bootstrap', 'bb_oversold')
+        # In critical urgency (day 7+, 0 trades), urgency_bounce also bypasses L5
+        if source == 'urgency_bounce' and critical_urgency:
+            is_oversold = True
         if xgb_prob < min_prob and not is_oversold:
             return
         if xgb_prob < min_prob and is_oversold:
@@ -440,11 +454,14 @@ class TradingBot:
         )
 
         # Conservative mode: first 2 days halve position size
-        competition_start = datetime(2026, 3, 21)
-        days_in = (datetime.utcnow() - competition_start).total_seconds() / 86400
         if 0 < days_in <= CONSERVATIVE_DAYS:
             size_usd *= 0.5
             log.info(f"Cycle {cycle}: CONSERVATIVE MODE — day {days_in:.1f}, size halved to ${size_usd:.0f}")
+
+        # Urgency mode: reduce size by 50% (probe trade, protect Calmar)
+        if source == 'urgency_bounce':
+            size_usd *= 0.5
+            log.info(f"Cycle {cycle}: URGENCY PROBE — size halved to ${size_usd:.0f}")
 
         log.info(
             f"Cycle {cycle}: L6 {'PASS' if size_usd > 0 else 'BLOCKED'} | "

@@ -180,7 +180,10 @@ def _is_halted(state: dict) -> bool:
     try:
         # Parse without fromisoformat for Python 3.9 compatibility
         clean = halt_until.replace("+00:00", "").replace("Z", "")
-        halt_dt = datetime.strptime(clean, "%Y-%m-%dT%H:%M:%S.%f")
+        try:
+            halt_dt = datetime.strptime(clean, "%Y-%m-%dT%H:%M:%S.%f")
+        except ValueError:
+            halt_dt = datetime.strptime(clean, "%Y-%m-%dT%H:%M:%S")
         return datetime.utcnow() < halt_dt
     except (ValueError, TypeError):
         return False
