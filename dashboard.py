@@ -70,6 +70,8 @@ def build_html():
         orders_resp = client.query_orders(pair='BTC/USD')
         order_list = orders_resp.get('OrderMatched', []) if isinstance(orders_resp, dict) else []
         filled_orders = [o for o in order_list if (o.get('Status') or '').upper() == 'FILLED']
+        # Sort by OrderID (ascending) to get chronological order
+        filled_orders.sort(key=lambda x: int(x.get('OrderID', 0)))
     except Exception:
         filled_orders = []
 
