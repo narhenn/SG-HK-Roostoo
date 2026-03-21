@@ -49,8 +49,9 @@ def build_html():
     state = load_state()
     positions = state.get('positions', [])
     trade_history = state.get('trade_history', [])
-    peak_equity = state.get('peak_equity', 50000)
-    current_equity = state.get('current_equity', 50000)
+    from config import STARTING_CAPITAL
+    peak_equity = state.get('peak_equity', STARTING_CAPITAL)
+    current_equity = state.get('current_equity', STARTING_CAPITAL)
     cycle_count = state.get('cycle_count', 0)
     halt_until = state.get('halt_until')
 
