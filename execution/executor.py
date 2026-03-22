@@ -340,12 +340,33 @@ class TradeExecutor:
             self._log_event("SELL ignored: invalid position qty")
             return None
 
+        # Sync qty with actual wallet balance to prevent rejection
+        try:
+            balance = self.client.get_balance()
+            wallet = balance.get('SpotWallet', balance.get('Data', {}))
+            if isinstance(wallet, dict) and 'BTC' in wallet:
+                wallet_btc = float(wallet['BTC'].get('Free', 0))
+                if wallet_btc > 0 and abs(wallet_btc - qty) > 0.0001:
+                    log.warning(f"SELL qty mismatch: state={qty:.5f} wallet={wallet_btc:.5f}. Using wallet.")
+                    qty = _round_value(wallet_btc, self.amount_precision)
+                elif wallet_btc <= 0:
+                    log.error(f"SELL failed: wallet BTC balance is 0. State says {qty:.5f}.")
+                    self.state["exec_position_open"] = False
+                    self.state["exec_btc_qty"] = 0.0
+                    self._save()
+                    return None
+        except Exception as e:
+            log.warning(f"Could not sync wallet balance for sell: {e}. Using state qty.")
+
         # Sell at bid to cross spread (taker) — fills instantly on mock exchange
         limit_price = _round_value(current_bid, self.price_precision)
         try:
             order = self.client.place_order(TRADING_PAIR, "SELL", "LIMIT", qty, limit_price)
             detail = order.get("OrderDetail", order)
             order_id = detail.get("OrderID") or order.get("OrderID")
+            # Log full API response if order_id is missing (debug sell failures)
+            if not order_id:
+                log.error(f"SELL order returned no OrderID. Full response: {order}")
             filled_qty = float(detail.get("FilledQuantity", 0) or 0)
             avg_price = float(detail.get("FilledAverPrice", 0) or 0)
             order_status = (detail.get("Status") or "").upper()
