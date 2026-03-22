@@ -287,6 +287,19 @@ class TradingBot:
             f"F&G={self.fear_greed} Breadth={self.breadth:.2f} | Price=${price:.2f}"
         )
 
+        # ── Crash Detector: block buying during sustained crashes ──
+        if len(df_1h_base) >= 4:
+            last_4 = df_1h_base.tail(4)
+            all_red = all(last_4['close'].values[i] < last_4['open'].values[i] for i in range(4))
+            total_drop = (last_4['close'].iloc[-1] - last_4['open'].iloc[0]) / last_4['open'].iloc[0]
+            if all_red and total_drop < -0.015:
+                self.state['_crash_detected'] = True
+                log.info(f"Cycle {cycle}: CRASH DETECTED — 4 red candles, {total_drop:.2%} drop. Buys blocked (RSI<25 only).")
+            else:
+                self.state['_crash_detected'] = False
+        else:
+            self.state['_crash_detected'] = False
+
         # ── Urgency detection: prevent score=0 from zero trades ──
         competition_start = datetime(2026, 3, 21, 12, 0)  # 8pm SGT = 12pm UTC
         trade_count = len(self.state.get('trade_history', []))
@@ -296,6 +309,27 @@ class TradingBot:
         if urgency:
             log.info(f"Cycle {cycle}: URGENCY MODE — day {days_in:.1f}, 0 trades"
                      f"{' (CRITICAL)' if critical_urgency else ''}")
+
+        # Consecutive loss breaker: 3+ losses in a row → pause 3 hours
+        trade_hist_check = self.state.get('trade_history', [])
+        if len(trade_hist_check) >= 3:
+            last_3 = trade_hist_check[-3:]
+            if all(t.get('pnl', 0) < 0 for t in last_3):
+                # Check if we've waited 3 hours since last loss
+                last_exit = last_3[-1].get('exit_time', '')
+                if last_exit:
+                    try:
+                        clean = last_exit.replace('+00:00', '').replace('Z', '')
+                        try:
+                            exit_dt = datetime.strptime(clean, "%Y-%m-%dT%H:%M:%S.%f")
+                        except ValueError:
+                            exit_dt = datetime.strptime(clean, "%Y-%m-%dT%H:%M:%S")
+                        hours_since = (datetime.utcnow() - exit_dt).total_seconds() / 3600
+                        if hours_since < 3:
+                            log.info(f"Cycle {cycle}: CONSECUTIVE LOSS BREAKER — 3 losses in a row, paused for {3-hours_since:.1f} more hours")
+                            return
+                    except (ValueError, TypeError):
+                        pass
 
         # ══════════════════════════════════════════
         # LAYER 2: SIGNAL GENERATION
@@ -318,6 +352,23 @@ class TradingBot:
             f"Cycle {cycle}: L2 Signal={direction}({source}) | RSI={_rsi_val:.1f}(thr<{RSI_OVERSOLD}) "
             f"Z={_zscore:.2f}(thr<-1.5) LowerBB=${_lower_bb:.0f} Price=${price:.0f}"
         )
+
+        # Block BUY during crash unless RSI < 25 (true capitulation)
+        if direction == 'BUY' and self.state.get('_crash_detected'):
+            if _rsi_val > 25:
+                log.info(f"Cycle {cycle}: BUY blocked by crash detector (RSI={_rsi_val:.1f}, need <25)")
+                return
+            else:
+                log.info(f"Cycle {cycle}: Crash detector override — RSI={_rsi_val:.1f} < 25 (capitulation)")
+
+        # Entry confirmation: don't buy if all recent candles are red (falling knife)
+        if direction == 'BUY' and not self.state.get('_crash_detected'):
+            if len(df_1h_base) >= 3:
+                last_3 = df_1h_base.tail(3)
+                all_red = all(last_3['close'].values[i] < last_3['open'].values[i] for i in range(3))
+                if all_red and _rsi_val > 30:
+                    log.info(f"Cycle {cycle}: BUY delayed — 3 consecutive red candles, waiting for green confirmation (RSI={_rsi_val:.1f})")
+                    return
 
         if direction == 'HOLD':
             return
@@ -450,6 +501,37 @@ class TradingBot:
         if source == 'urgency_bounce':
             size_usd *= 0.5
             log.info(f"Cycle {cycle}: URGENCY PROBE — size halved to ${size_usd:.0f}")
+
+        # Anti-Martingale: shrink after losses, grow after wins
+        trade_hist = self.state.get('trade_history', [])
+        if trade_hist:
+            # Count consecutive losses/wins from end of history
+            consec_losses = 0
+            consec_wins = 0
+            for t in reversed(trade_hist):
+                if t.get('pnl', 0) < 0:
+                    if consec_wins > 0:
+                        break
+                    consec_losses += 1
+                elif t.get('pnl', 0) > 0:
+                    if consec_losses > 0:
+                        break
+                    consec_wins += 1
+                else:
+                    break
+
+            if consec_losses >= 3:
+                size_usd *= 0.3
+                log.info(f"Cycle {cycle}: ANTI-MARTINGALE — {consec_losses} consecutive losses, size x0.3 = ${size_usd:.0f}")
+            elif consec_losses == 2:
+                size_usd *= 0.5
+                log.info(f"Cycle {cycle}: ANTI-MARTINGALE — 2 consecutive losses, size x0.5 = ${size_usd:.0f}")
+            elif consec_losses == 1:
+                size_usd *= 0.7
+                log.info(f"Cycle {cycle}: ANTI-MARTINGALE — 1 loss, size x0.7 = ${size_usd:.0f}")
+            elif consec_wins >= 2:
+                size_usd *= 1.3
+                log.info(f"Cycle {cycle}: ANTI-MARTINGALE — {consec_wins} consecutive wins, size x1.3 = ${size_usd:.0f}")
 
         log.info(
             f"Cycle {cycle}: L6 {'PASS' if size_usd > 0 else 'BLOCKED'} | "
