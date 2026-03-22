@@ -353,6 +353,16 @@ class TradingBot:
             f"Z={_zscore:.2f}(thr<-1.5) LowerBB=${_lower_bb:.0f} Price=${price:.0f}"
         )
 
+        # Fisher Transform for logging
+        from strategy.signals import _fisher_transform
+        _fisher = _fisher_transform(df_1h)
+        if _fisher['fisher'] != 0:
+            log.info(
+                f"Cycle {cycle}: L2 Fisher={_fisher['fisher']:.2f} Signal={_fisher['signal']:.2f} "
+                f"{'BULLISH CROSS' if _fisher['bullish_cross'] else ''}"
+                f"{'BEARISH CROSS' if _fisher['bearish_cross'] else ''}"
+            )
+
         # Block BUY during crash unless RSI < 25 (true capitulation)
         if direction == 'BUY' and self.state.get('_crash_detected'):
             if _rsi_val > 25:

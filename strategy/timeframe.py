@@ -72,6 +72,7 @@ def check_timeframe(df_1h: pd.DataFrame, df_4h: pd.DataFrame,
         'rsi_oversold_bootstrap',
         'bb_oversold',
         'urgency_bounce',
+        'fisher_bottom',
     )
     if is_oversold_signal:
         return {

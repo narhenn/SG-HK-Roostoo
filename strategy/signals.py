@@ -43,6 +43,52 @@ def _macd(close: pd.Series):
     return macd_line, signal_line, histogram
 
 
+def _fisher_transform(df: pd.DataFrame, period: int = 10) -> dict:
+    """
+    Ehlers Fisher Transform — detects exact turning points.
+    Returns fisher value, signal (previous fisher), and whether a bullish crossover occurred.
+    """
+    if len(df) < period + 2:
+        return {'fisher': 0, 'signal': 0, 'bullish_cross': False, 'bearish_cross': False}
+
+    high = df['high'].rolling(window=period).max()
+    low = df['low'].rolling(window=period).min()
+
+    # Normalize price to -1 to +1 range
+    mid = (high + low) / 2
+    range_hl = high - low
+    range_hl = range_hl.replace(0, 1e-10)  # avoid division by zero
+
+    # Raw value: where current close sits in the range, normalized to -0.999 to 0.999
+    raw = 2 * ((df['close'] - low) / range_hl) - 1
+    raw = raw.clip(-0.999, 0.999)  # clamp to avoid log(0)
+
+    # Smooth the raw value
+    value = raw.ewm(span=5, adjust=False).mean()
+    value = value.clip(-0.999, 0.999)
+
+    # Apply Fisher Transform: fisher = 0.5 * ln((1 + x) / (1 - x))
+    fisher = 0.5 * np.log((1 + value) / (1 - value))
+
+    # Current and previous fisher values
+    fisher_now = float(fisher.iloc[-1])
+    fisher_prev = float(fisher.iloc[-2])
+    signal_now = fisher_prev  # signal line is lagged fisher
+
+    # Detect crossovers
+    # Bullish: fisher crosses above signal from below (bottom reversal)
+    bullish_cross = fisher_now > signal_now and fisher_prev <= float(fisher.iloc[-3]) if len(fisher) >= 3 else False
+    # Bearish: fisher crosses below signal from above
+    bearish_cross = fisher_now < signal_now and fisher_prev >= float(fisher.iloc[-3]) if len(fisher) >= 3 else False
+
+    return {
+        'fisher': fisher_now,
+        'signal': signal_now,
+        'bullish_cross': bullish_cross,
+        'bearish_cross': bearish_cross,
+    }
+
+
 def _trending_signals(df: pd.DataFrame, urgency: bool = False) -> dict:
     """Momentum signals for trending regime."""
     close = df['close']
@@ -94,6 +140,13 @@ def _trending_signals(df: pd.DataFrame, urgency: bool = False) -> dict:
         return {'direction': 'BUY', 'source': 'urgency_bounce',
                 'macd_confirms': False}
 
+    # Tier 1.5: Fisher Transform bottom detection
+    # Fisher bullish crossover + RSI < 40 = high-probability bottom
+    fisher = _fisher_transform(df)
+    if fisher['bullish_cross'] and rsi_val < 40:
+        return {'direction': 'BUY', 'source': 'fisher_bottom',
+                'macd_confirms': False}
+
     # Decision
     if broke_upper and bullish_alignment:
         return {'direction': 'BUY', 'source': 'donchian_breakout',
@@ -141,6 +194,12 @@ def _sideways_signals(df: pd.DataFrame, urgency: bool = False) -> dict:
         elif rsi_val > RSI_OVERBOUGHT:
             return {'direction': 'SELL', 'source': 'rsi_overbought_bootstrap'}
         return {'direction': 'HOLD', 'source': 'bootstrap_stale'}
+
+    # Fisher Transform bottom detection for sideways
+    fisher = _fisher_transform(df)
+    if fisher['bullish_cross'] and rsi_val < 45:
+        return {'direction': 'BUY', 'source': 'fisher_bottom',
+                'macd_confirms': False}
 
     # In urgency mode, widen RSI threshold by 3 to catch more entries
     rsi_buy = RSI_OVERSOLD + 3 if urgency else RSI_OVERSOLD
