@@ -55,9 +55,16 @@ def build_html():
         balance = client.get_balance()
         wallet = balance.get('SpotWallet', balance.get('Data', {}))
         if isinstance(wallet, dict) and 'USD' in wallet:
-            current_equity = float(wallet['USD'].get('Free', 0))
+            usd_free = float(wallet['USD'].get('Free', 0))
             # Check if we hold BTC (open position)
             btc_held = float(wallet.get('BTC', {}).get('Free', 0)) if 'BTC' in wallet else 0
+            # Total equity = USD + BTC value at current price
+            try:
+                raw_t = client.get_ticker(TRADING_PAIR)
+                btc_price = float(raw_t['Data'][TRADING_PAIR]['LastPrice']) if 'Data' in raw_t else 0
+            except Exception:
+                btc_price = 0
+            current_equity = usd_free + btc_held * btc_price
         else:
             current_equity = state.get('current_equity', STARTING_CAPITAL)
             btc_held = 0
