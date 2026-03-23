@@ -55,6 +55,7 @@ from execution.alerts import (
     alert_drawdown, alert_kill_switch, alert_error, alert_daily_summary,
     send_alert,
 )
+from strategy.momentum_scanner import MomentumScanner
 
 # ── Setup Logging ──
 os.makedirs(LOGS_DIR, exist_ok=True)
@@ -93,6 +94,7 @@ class TradingBot:
         self.last_external_fetch = 0
         self.last_daily_summary = 0
         self.last_heartbeat = 0
+        self.alt_scanner = MomentumScanner(self.client, self.state, save_state_fn=save_state)
 
     def bootstrap(self):
         """Cold start: load historical data."""
@@ -665,6 +667,11 @@ class TradingBot:
         while self.running:
             try:
                 self.run_cycle()
+                # Alt coin momentum scanner runs independently of BTC signals
+                try:
+                    self.alt_scanner.run_cycle()
+                except Exception as e:
+                    log.error(f"Alt scanner error: {e}")
                 self.send_heartbeat()
                 self.send_daily_summary()
                 save_state(self.state)
