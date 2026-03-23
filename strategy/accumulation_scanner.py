@@ -58,7 +58,7 @@ LAG_SIZE_MULT = 0.8         # Slightly smaller size (less conviction than accumu
 # Position management
 MAX_POSITIONS = 6
 POS_SIZE_BASE = 0.03
-TRAIL_PCT = 0.04     # Backtested: 4% trail = highest composite score (8.2 vs 7.3 at 3.5%)
+TRAIL_PCT = 0.025    # WITH MTF filter: 2.5% trail = composite 8.5 (beats 4% at 3.7)
 TP_PCT = 0           # DISABLED: gunner TP caps winners at +3% but losses run to -3.5%. R:R = 0.43:1. Pure trail is better (+0.85% avg vs +0.54%)
 TIME_STOP_MIN = 999  # DISABLED: backtested — time stops CUT winners, hurt P&L
 FLAT_THRESHOLD = 0.003
