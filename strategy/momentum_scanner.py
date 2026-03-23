@@ -16,9 +16,17 @@ EXCLUDED_COINS = {'BONK/USD', 'DOGE/USD'}  # AmountPrecision=0 means whole units
 MIN_MOMENTUM = 0.01      # 1% minimum 24h change to consider
 MAX_ALT_POSITIONS = 2    # Maximum simultaneous alt positions
 ALT_POSITION_SIZE = 15000  # $15k per alt position
-ALT_TRAIL_PCT = 0.03     # 3% trailing stop for alts
+ALT_TRAIL_MIN = 0.02     # Minimum trailing stop: 2%
+ALT_TRAIL_MAX = 0.07     # Maximum trailing stop: 7%
 SCAN_INTERVAL = 300      # Scan every 5 minutes (seconds)
 MIN_PRICE = 0.005        # Minimum coin price to trade
+
+
+def _adaptive_trail(change_24h: float) -> float:
+    """Calculate trailing stop % based on coin's 24h volatility.
+    Trail at half the 24h move, clamped between MIN and MAX."""
+    trail = abs(change_24h) * 0.5
+    return max(ALT_TRAIL_MIN, min(trail, ALT_TRAIL_MAX))
 
 
 class MomentumScanner:
@@ -121,12 +129,16 @@ class MomentumScanner:
                 fill_price = avg_price or limit_price
                 fill_qty = filled_qty or qty
 
+                # Adaptive trailing stop based on coin's volatility
+                trail_pct = _adaptive_trail(coin['change'])
+
                 # Record position
                 self.state['alt_positions'][pair] = {
                     'entry_price': fill_price,
                     'qty': fill_qty,
                     'peak_price': fill_price,
-                    'stop': fill_price * (1 - ALT_TRAIL_PCT),
+                    'trail_pct': trail_pct,
+                    'stop': fill_price * (1 - trail_pct),
                     'entry_time': datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S'),
                     'order_id': order_id,
                     'price_precision': prec['price_precision'],
@@ -134,7 +146,7 @@ class MomentumScanner:
                 }
                 self._save()
 
-                log.info(f"[AltScanner] BOUGHT {pair}: qty={fill_qty} price=${fill_price:.4f} size=${fill_qty*fill_price:.0f}")
+                log.info(f"[AltScanner] BOUGHT {pair}: qty={fill_qty} price=${fill_price:.4f} size=${fill_qty*fill_price:.0f} trail={trail_pct:.1%}")
 
                 # Telegram alert
                 try:
@@ -144,7 +156,8 @@ class MomentumScanner:
                         f"Price: ${fill_price:.4f}\n"
                         f"Size: ${fill_qty * fill_price:,.0f}\n"
                         f"Momentum: {coin['change']*100:+.1f}%\n"
-                        f"Stop: ${fill_price * (1 - ALT_TRAIL_PCT):,.4f}"
+                        f"Trail: {trail_pct:.1%}\n"
+                        f"Stop: ${fill_price * (1 - trail_pct):,.4f}"
                     )
                 except Exception:
                     pass
@@ -185,12 +198,16 @@ class MomentumScanner:
 
                 entry = pos['entry_price']
                 peak = pos.get('peak_price', entry)
+                trail_pct = pos.get('trail_pct', ALT_TRAIL_MIN)
 
-                # Update peak
+                # Update peak and adaptive trail
                 if price > peak:
                     pos['peak_price'] = price
-                    pos['stop'] = price * (1 - ALT_TRAIL_PCT)
-                    log.info(f"[AltScanner] {pair}: new peak ${price:.4f}, stop ${pos['stop']:.4f}")
+                    # Re-calculate trail based on current momentum
+                    new_trail = _adaptive_trail(change)
+                    pos['trail_pct'] = new_trail
+                    pos['stop'] = price * (1 - new_trail)
+                    log.info(f"[AltScanner] {pair}: new peak ${price:.4f}, trail={new_trail:.1%}, stop ${pos['stop']:.4f}")
 
                 # Check trailing stop
                 if price <= pos['stop']:
