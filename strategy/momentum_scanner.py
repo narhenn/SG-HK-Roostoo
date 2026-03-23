@@ -131,6 +131,9 @@ class MomentumScanner:
 
                 # Adaptive trailing stop based on coin's volatility
                 trail_pct = _adaptive_trail(coin['change'])
+                # Take profit at half the entry momentum
+                tp_pct = max(abs(coin['change']) * 0.5, 0.01)  # min 1% TP
+                tp_price = fill_price * (1 + tp_pct)
 
                 # Record position
                 self.state['alt_positions'][pair] = {
@@ -138,6 +141,8 @@ class MomentumScanner:
                     'qty': fill_qty,
                     'peak_price': fill_price,
                     'trail_pct': trail_pct,
+                    'tp_price': tp_price,
+                    'tp_pct': tp_pct,
                     'stop': fill_price * (1 - trail_pct),
                     'entry_time': datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S'),
                     'order_id': order_id,
@@ -156,8 +161,8 @@ class MomentumScanner:
                         f"Price: ${fill_price:.4f}\n"
                         f"Size: ${fill_qty * fill_price:,.0f}\n"
                         f"Momentum: {coin['change']*100:+.1f}%\n"
-                        f"Trail: {trail_pct:.1%}\n"
-                        f"Stop: ${fill_price * (1 - trail_pct):,.4f}"
+                        f"TP: ${tp_price:.4f} (+{tp_pct*100:.1f}%)\n"
+                        f"Stop: ${fill_price * (1 - trail_pct):,.4f} (-{trail_pct*100:.1f}%)"
                     )
                 except Exception:
                     pass
@@ -208,6 +213,14 @@ class MomentumScanner:
                     pos['trail_pct'] = new_trail
                     pos['stop'] = price * (1 - new_trail)
                     log.info(f"[AltScanner] {pair}: new peak ${price:.4f}, trail={new_trail:.1%}, stop ${pos['stop']:.4f}")
+
+                # Check take profit — lock profit, move to next wave
+                tp_price = pos.get('tp_price', 0)
+                if tp_price > 0 and price >= tp_price:
+                    tp_pct = pos.get('tp_pct', 0)
+                    log.info(f"[AltScanner] {pair}: TP HIT at ${price:.4f} (+{tp_pct*100:.1f}% from entry)")
+                    to_close.append((pair, bid, 'TAKE_PROFIT'))
+                    continue
 
                 # Check trailing stop
                 if price <= pos['stop']:
