@@ -37,7 +37,7 @@ def _hybrid_size(change_24h: float, alt_trade_history: list) -> float:
     # Base size from momentum tier
     base = 10000  # default
     for threshold, size in MOMENTUM_TIERS:
-        if abs(change_24h) >= threshold:
+        if change_24h >= threshold:
             base = size
             break
 
@@ -88,6 +88,8 @@ class MomentumScanner:
         self.state.setdefault('alt_positions', {})
         self.state.setdefault('alt_trade_history', [])
         self.state.setdefault('alt_cooldowns', {})  # {pair: sell_timestamp}
+        self.state.setdefault('alt_cooldowns_change', {})
+        self._last_ticker_success = time.time()
 
     def _save(self):
         if self.save_state_fn:
@@ -152,10 +154,19 @@ class MomentumScanner:
         }
 
     def _current_alt_exposure(self):
-        """Total USD value of all alt positions."""
+        """Total USD value of all alt positions at CURRENT market price."""
         total = 0
+        try:
+            ticker = self.client.get_ticker()
+            all_data = ticker.get('Data', {})
+        except Exception:
+            all_data = {}
         for pair, pos in self.state.get('alt_positions', {}).items():
-            total += pos.get('entry_price', 0) * pos.get('qty', 0)
+            current_price = float(all_data.get(pair, {}).get('LastPrice', 0))
+            if current_price > 0:
+                total += current_price * pos.get('qty', 0)
+            else:
+                total += pos.get('entry_price', 0) * pos.get('qty', 0)
         return total
 
     def _open_alt_position(self, coin, exchange_info):
@@ -263,11 +274,22 @@ class MomentumScanner:
         try:
             all_ticker_raw = self.client.get_ticker()
             all_ticker = all_ticker_raw.get('Data', {})
+            self._last_ticker_success = time.time()
         except Exception as e:
             log.error(f"[AltScanner] Ticker fetch failed: {e}")
+            minutes_since_ticker = (time.time() - self._last_ticker_success) / 60
+            if minutes_since_ticker > 5:
+                log.error(f"[AltScanner] API DOWN for {minutes_since_ticker:.0f} minutes! Stops are blind!")
+                try:
+                    from execution.alerts import send_alert
+                    send_alert(f"<b>API DOWN {minutes_since_ticker:.0f}min</b>\nAlt stops are NOT being checked!")
+                except Exception:
+                    pass
             return
 
         for pair, pos in list(positions.items()):  # list() for safe iteration
+            if pos.get('sell_failed'):
+                continue  # Don't retry failed sells — zombie will be cleaned up at scan time
             try:
                 ticker = all_ticker.get(pair, {})
                 price = float(ticker.get('LastPrice', 0))
@@ -295,48 +317,69 @@ class MomentumScanner:
                     log.info(f"[AltScanner] {pair}: GUNNER TP at ${price:.4f} (+{tp_pct*100:.1f}%). Selling 70%, runner stays.")
                     gunner_qty = round(pos['qty'] * 0.7, pos.get('amount_precision', 2))
                     if gunner_qty > 0:
-                        self._close_partial(pair, bid, gunner_qty, 'GUNNER_TP')
-                        pos['qty'] = round(pos['qty'] - gunner_qty, pos.get('amount_precision', 2))
-                        pos['gunner_fired'] = True
-                        pos['stop'] = entry * 1.002  # Breakeven INCLUDING entry fee
-                        pos['tp_price'] = 0
-                        log.info(f"[AltScanner] {pair}: RUNNER active. qty={pos['qty']} stop=breakeven+fee ${entry*1.001:.4f}")
-                        try:
-                            from execution.alerts import send_alert
-                            send_alert(
-                                f"<b>GUNNER FIRED {pair}</b>\n"
-                                f"Sold 70% at ${bid:.4f}\n"
-                                f"Runner: {pos['qty']} units\n"
-                                f"Runner stop: ${entry*1.001:.4f}\n"
-                                f"Free upside from here"
-                            )
-                        except Exception:
-                            pass
+                        if self._close_partial(pair, bid, gunner_qty, 'GUNNER_TP'):
+                            # Convert remaining to runner
+                            pos['qty'] = round(pos['qty'] - gunner_qty, pos.get('amount_precision', 2))
+                            pos['gunner_fired'] = True
+                            pos['stop'] = entry * 1.003  # Breakeven INCLUDING entry fee + exit fee + spread
+                            pos['tp_price'] = 0
+                            log.info(f"[AltScanner] {pair}: RUNNER active. qty={pos['qty']} stop=breakeven+fee ${entry*1.003:.4f}")
+                            try:
+                                from execution.alerts import send_alert
+                                send_alert(
+                                    f"<b>GUNNER FIRED {pair}</b>\n"
+                                    f"Sold 70% at ${bid:.4f}\n"
+                                    f"Runner: {pos['qty']} units\n"
+                                    f"Runner stop: ${entry*1.003:.4f}\n"
+                                    f"Free upside from here"
+                                )
+                            except Exception:
+                                pass
+                        else:
+                            log.error(f"[AltScanner] {pair}: GUNNER SELL FAILED — keeping full position")
+                            continue
                     continue
 
                 # Check trailing stop
                 if price <= pos['stop']:
-                    to_close.append((pair, bid, 'TRAILING_STOP'))
+                    to_close.append((pair, bid, 'TRAILING_STOP', change))
                     continue
 
                 # Check momentum reversal — real reversal, not tiny dip
                 if change < MOMENTUM_REVERSAL:
                     pnl_pct = (price - entry) / entry
                     if pnl_pct > 0.003:
-                        # In profit + momentum dead → take profit and move on
-                        to_close.append((pair, bid, 'MOMENTUM_REVERSAL'))
+                        to_close.append((pair, bid, 'MOMENTUM_REVERSAL', change))
                     elif pnl_pct < -0.01:
-                        # Losing 1%+ AND momentum negative → cut the loss
-                        to_close.append((pair, bid, 'MOMENTUM_LOSS_CUT'))
+                        to_close.append((pair, bid, 'MOMENTUM_LOSS_CUT', change))
+                    elif abs(pnl_pct) <= 0.01:
+                        # Dead zone: flat position + negative momentum = exit before it gets worse
+                        to_close.append((pair, bid, 'MOMENTUM_FLAT_EXIT', change))
+
+                # Max hold time: exit after 24 hours regardless
+                entry_time_str = pos.get('entry_time', '')
+                if entry_time_str:
+                    try:
+                        clean = entry_time_str.replace('+00:00', '').replace('Z', '')
+                        try:
+                            entry_dt = datetime.strptime(clean, '%Y-%m-%dT%H:%M:%S.%f')
+                        except ValueError:
+                            entry_dt = datetime.strptime(clean, '%Y-%m-%dT%H:%M:%S')
+                        hours_held = (datetime.utcnow() - entry_dt).total_seconds() / 3600
+                        if hours_held > 24:
+                            log.info(f"[AltScanner] {pair}: held {hours_held:.0f}h, max hold time exit")
+                            to_close.append((pair, bid, 'MAX_HOLD_TIME', change))
+                    except (ValueError, TypeError):
+                        pass
 
             except Exception as e:
                 log.error(f"[AltScanner] {pair}: check failed: {e}")
 
         # Execute exits with delay between sells
-        for i, (pair, bid, reason) in enumerate(to_close):
+        for i, (pair, bid, reason, chg) in enumerate(to_close):
             if i > 0:
                 time.sleep(2)  # Rate limit protection
-            self._close_alt_position(pair, bid, reason)
+            self._close_alt_position(pair, bid, reason, chg)
 
         self._save()
 
@@ -344,7 +387,7 @@ class MomentumScanner:
         """Sell a partial quantity of an alt position (gunner exit)."""
         pos = self.state['alt_positions'].get(pair)
         if not pos:
-            return
+            return False
 
         price_prec = pos.get('price_precision', 4)
         limit_price = round(current_bid, price_prec)
@@ -357,7 +400,7 @@ class MomentumScanner:
 
             if not order_id:
                 log.error(f"[AltScanner] {pair}: PARTIAL SELL failed. Response: {order}")
-                return
+                return False
 
             exit_price = avg_price or limit_price
             entry_price = pos['entry_price']
@@ -385,11 +428,13 @@ class MomentumScanner:
             self.state['current_equity'] = equity + net_pnl
 
             self._save()
+            return True
 
         except Exception as e:
             log.error(f"[AltScanner] {pair}: PARTIAL SELL failed: {e}")
+            return False
 
-    def _close_alt_position(self, pair, current_bid, reason):
+    def _close_alt_position(self, pair, current_bid, reason, change_at_exit=0):
         """Close an alt position."""
         pos = self.state['alt_positions'].get(pair)
         if not pos:
@@ -464,6 +509,7 @@ class MomentumScanner:
             # Remove position and set cooldown
             del self.state['alt_positions'][pair]
             self.state['alt_cooldowns'][pair] = time.time()
+            self.state.setdefault('alt_cooldowns_change', {})[pair] = change_at_exit
             self._save()
 
             # Telegram alert
@@ -514,17 +560,27 @@ class MomentumScanner:
         for coin in top_movers:
             if opened >= slots:
                 break
-            if coin['pair'] in self.state.get('alt_positions', {}):
-                continue
-            # Skip coins with failed sells (need manual intervention)
-            existing = self.state.get('alt_positions', {}).get(coin['pair'], {})
+            pair = coin['pair']
+            # Check sell_failed FIRST (before checking if held — zombie might be in alt_positions)
+            existing = self.state.get('alt_positions', {}).get(pair, {})
             if existing and existing.get('sell_failed'):
+                # Don't count zombie toward slot limit — remove it
+                log.warning(f"[AltScanner] {pair}: removing zombie position (sell failed previously)")
+                del self.state['alt_positions'][pair]
+                self._save()
                 continue
-            # Skip coins in cooldown (recently sold — prevents churn)
-            cooldown_time = self.state.get('alt_cooldowns', {}).get(coin['pair'], 0)
+            if pair in self.state.get('alt_positions', {}):
+                continue
+            # Skip coins in cooldown — require momentum RESET before re-entry
+            cooldown_time = self.state.get('alt_cooldowns', {}).get(pair, 0)
             if time.time() - cooldown_time < COIN_COOLDOWN:
                 mins_left = (COIN_COOLDOWN - (time.time() - cooldown_time)) / 60
-                log.info(f"[AltScanner] {coin['pair']}: in cooldown ({mins_left:.0f}min left), skipping")
+                log.info(f"[AltScanner] {pair}: in cooldown ({mins_left:.0f}min left), skipping")
+                continue
+            # Even after cooldown expires, require the coin went negative first (new pump, not same pump)
+            last_exit_change = self.state.get('alt_cooldowns_change', {}).get(pair, 0)
+            if last_exit_change > 0 and coin['change'] > 0 and abs(coin['change'] - last_exit_change) < 0.02:
+                log.info(f"[AltScanner] {pair}: same pump (exit={last_exit_change*100:.1f}%, now={coin['change']*100:.1f}%), waiting for reset")
                 continue
 
             log.info(f"[AltScanner] Top mover: {coin['pair']} {coin['change']*100:+.1f}% ${coin['price']:.4f}")
