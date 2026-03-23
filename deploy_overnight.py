@@ -71,30 +71,48 @@ def main():
 
     results = []
 
-    # Buy BTC ($200k)
+    # Buy BTC ($200k) — tracked as BTC/USD in alt_positions
+    # (separate from exec_btc which is the main BTC strategy position)
     print("\n=== BUY BTC $200k ===")
     ok, fp, fq, oid = buy(client, 'BTC/USD', 200000, 2, 5)
     if ok:
         trail = 0.01
         tp_pct = 0.013
-        alt['BTC2/USD'] = {
-            'entry_price': fp,
-            'qty': fq,
-            'peak_price': fp,
-            'trail_pct': trail,
-            'tp_price': round(fp * (1 + tp_pct), 2),
-            'tp_pct': tp_pct,
-            'stop': round(fp * (1 - trail), 2),
-            'entry_time': now,
-            'order_id': oid,
-            'entry_change': 0.035,
-            'price_precision': 2,
-            'amount_precision': 5,
-            'entry_type': 'accumulation',
-            'wallet_pair': 'BTC/USD',
-        }
+        btc_key = 'BTC/USD'
+        if btc_key in alt:
+            # Merge with existing alt BTC position
+            old = alt[btc_key]
+            old_cost = old['entry_price'] * old['qty']
+            new_cost = fp * fq
+            total_qty = old['qty'] + fq
+            avg_entry = (old_cost + new_cost) / total_qty
+            alt[btc_key]['qty'] = total_qty
+            alt[btc_key]['entry_price'] = avg_entry
+            alt[btc_key]['peak_price'] = max(old.get('peak_price', avg_entry), fp)
+            alt[btc_key]['stop'] = round(avg_entry * (1 - trail), 2)
+            alt[btc_key]['tp_price'] = round(avg_entry * (1 + tp_pct), 2)
+            alt[btc_key]['trail_pct'] = trail
+            alt[btc_key]['tp_pct'] = tp_pct
+            alt[btc_key]['entry_type'] = 'accumulation'
+            print("  Merged with existing BTC alt position: total %.5f BTC @ avg $%.2f" % (total_qty, avg_entry))
+        else:
+            alt[btc_key] = {
+                'entry_price': fp,
+                'qty': fq,
+                'peak_price': fp,
+                'trail_pct': trail,
+                'tp_price': round(fp * (1 + tp_pct), 2),
+                'tp_pct': tp_pct,
+                'stop': round(fp * (1 - trail), 2),
+                'entry_time': now,
+                'order_id': oid,
+                'entry_change': 0.035,
+                'price_precision': 2,
+                'amount_precision': 5,
+                'entry_type': 'accumulation',
+            }
+            print("  Added BTC/USD to alt_positions (exec_btc tracks main position separately)")
         results.append(('BTC', fq, fp, fq * fp))
-        print("  Added as BTC2/USD (separate from main BTC position)")
     else:
         print("  BTC buy FAILED")
 
@@ -145,11 +163,14 @@ def main():
     else:
         print("  ETH buy FAILED")
 
-    # Save state
+    # Save state atomically (tmp + rename)
+    import os
     state['alt_positions'] = alt
-    with open(STATE_FILE, 'w') as f:
-        json.dump(state, f, indent=2)
-    print("\nState saved. %d alt positions." % len(alt))
+    tmp = STATE_FILE + '.tmp'
+    with open(tmp, 'w') as f:
+        json.dump(state, f, indent=2, default=str)
+    os.rename(tmp, STATE_FILE)
+    print("\nState saved atomically. %d alt positions." % len(alt))
 
     # Summary
     print("\n=== OVERNIGHT DEPLOY SUMMARY ===")
