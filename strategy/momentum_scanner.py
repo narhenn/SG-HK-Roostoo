@@ -90,6 +90,7 @@ class MomentumScanner:
         self.state.setdefault('alt_cooldowns', {})  # {pair: sell_timestamp}
         self.state.setdefault('alt_cooldowns_change', {})
         self._last_ticker_success = time.time()
+        self._price_history = {}  # {pair: [(timestamp, price), ...]} for acceleration filter
 
     def _save(self):
         if self.save_state_fn:
@@ -107,6 +108,46 @@ class MomentumScanner:
             log.error(f"[AltScanner] Exchange info failed: {e}")
             return {}
 
+    def _is_pump_fresh(self, pair, current_price):
+        """Check if a coin's pump is still active (accelerating), not stale.
+        Returns True if momentum is fresh, False if pump is dying/stale."""
+        history = self._price_history.get(pair, [])
+        if len(history) < 3:
+            # Not enough history yet — allow entry (benefit of the doubt)
+            return True
+
+        # Check price 15 minutes ago (3 scans at 5-min intervals)
+        old_time, old_price = history[-3]
+        if old_price <= 0:
+            return True
+
+        recent_change = (current_price - old_price) / old_price
+
+        # Fresh: price still rising in recent window
+        if recent_change > 0.002:  # +0.2% in 15 min = still pumping
+            return True
+        # Stale: price flat or falling = pump is over
+        elif recent_change < 0.001:  # less than +0.1% in 15 min
+            log.info(f"[AltScanner] {pair}: stale pump (recent 15min change: {recent_change*100:+.2f}%), skipping")
+            return False
+        return True
+
+    def _record_prices(self, data):
+        """Record current prices for acceleration tracking."""
+        now = time.time()
+        for pair, info in data.items():
+            try:
+                price = float(info.get('LastPrice', 0))
+                if price > 0:
+                    if pair not in self._price_history:
+                        self._price_history[pair] = []
+                    self._price_history[pair].append((now, price))
+                    # Keep only last 20 entries (~100 min at 5-min scan)
+                    if len(self._price_history[pair]) > 20:
+                        self._price_history[pair] = self._price_history[pair][-20:]
+            except (ValueError, TypeError):
+                pass
+
     def _scan_momentum(self):
         """Scan all coins and return top movers above MIN_MOMENTUM."""
         try:
@@ -115,6 +156,9 @@ class MomentumScanner:
         except Exception as e:
             log.error(f"[AltScanner] Ticker scan failed: {e}")
             return []
+
+        # Record prices for acceleration tracking
+        self._record_prices(data)
 
         coins = []
         for pair, info in data.items():
@@ -129,6 +173,10 @@ class MomentumScanner:
                 if price < MIN_PRICE or bid <= 0 or ask <= 0:
                     continue
                 if change < MIN_MOMENTUM:
+                    continue
+
+                # Acceleration filter: skip stale pumps
+                if not self._is_pump_fresh(pair, price):
                     continue
 
                 coins.append({
@@ -310,8 +358,35 @@ class MomentumScanner:
                     pos['stop'] = price * (1 - new_trail)
                     log.info(f"[AltScanner] {pair}: new peak ${price:.4f}, trail={new_trail:.1%}, stop ${pos['stop']:.4f}")
 
-                # Runner-Gunner take profit
+                # Time-decaying TP: lower the target as position ages
                 tp_price = pos.get('tp_price', 0)
+                if tp_price > 0 and not pos.get('gunner_fired'):
+                    entry_time_str = pos.get('entry_time', '')
+                    if entry_time_str:
+                        try:
+                            clean_t = entry_time_str.replace('+00:00', '').replace('Z', '')
+                            try:
+                                et = datetime.strptime(clean_t, '%Y-%m-%dT%H:%M:%S.%f')
+                            except ValueError:
+                                et = datetime.strptime(clean_t, '%Y-%m-%dT%H:%M:%S')
+                            mins_held = (datetime.utcnow() - et).total_seconds() / 60
+                            original_tp_pct = pos.get('tp_pct', 0.015)
+
+                            # Decay schedule: full → 2/3 → 1/2 → min 1.5%
+                            if mins_held > 60:
+                                decayed_pct = max(original_tp_pct * 0.4, 0.015)
+                            elif mins_held > 30:
+                                decayed_pct = max(original_tp_pct * 0.6, 0.015)
+                            elif mins_held > 15:
+                                decayed_pct = max(original_tp_pct * 0.8, 0.015)
+                            else:
+                                decayed_pct = original_tp_pct
+
+                            tp_price = entry * (1 + decayed_pct)
+                        except (ValueError, TypeError):
+                            pass
+
+                # Runner-Gunner take profit
                 if tp_price > 0 and price >= tp_price and not pos.get('gunner_fired'):
                     tp_pct = pos.get('tp_pct', 0)
                     log.info(f"[AltScanner] {pair}: GUNNER TP at ${price:.4f} (+{tp_pct*100:.1f}%). Selling 70%, runner stays.")
