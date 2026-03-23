@@ -6,7 +6,7 @@ Runs alongside the main BTC strategy.
 import logging
 import time
 import threading
-from datetime import datetime
+from datetime import datetime, timedelta
 
 log = logging.getLogger("TradingBot")
 
@@ -16,7 +16,7 @@ EXCLUDED_COINS = {'BONK/USD', 'DOGE/USD'}  # AmountPrecision=0 means whole units
 # Scanner config
 MIN_MOMENTUM = 0.01      # 1% minimum 24h change to consider
 MAX_ALT_POSITIONS = 8    # Maximum simultaneous alt positions
-MAX_ALT_EXPOSURE = 0.40  # Max 40% of portfolio in alts total (~$400k)
+MAX_ALT_EXPOSURE = 0.20  # Max 20% of portfolio (~$200k) — ramp up after proving profitable
 ALT_TRAIL_MIN = 0.02     # Minimum trailing stop: 2%
 ALT_TRAIL_MAX = 0.07     # Maximum trailing stop: 7%
 SCAN_INTERVAL = 120      # Scan every 2 minutes (faster entry)
@@ -319,6 +319,26 @@ class MomentumScanner:
         positions = self.state.get('alt_positions', {})
         to_close = []
 
+        # SAFETY NET 1: Daily loss cap — halt new buys if losing >3% today
+        DAILY_LOSS_CAP = 0.03
+        today = datetime.utcnow().strftime('%Y-%m-%d')
+        alt_hist = self.state.get('alt_trade_history', [])
+        pnl_today = sum(t.get('pnl', 0) for t in alt_hist if t.get('exit_time', '').startswith(today))
+        equity = self.state.get('current_equity', 1000000)
+        if pnl_today < -(equity * DAILY_LOSS_CAP):
+            if not self.state.get('_daily_cap_hit'):
+                log.warning(f"[AltScanner] DAILY LOSS CAP: ${pnl_today:,.0f} today. No new buys for 4h.")
+                self.state['_daily_cap_hit'] = True
+                self.state['halt_until'] = (datetime.utcnow() + timedelta(hours=4)).strftime('%Y-%m-%dT%H:%M:%S')
+                try:
+                    from execution.alerts import send_alert
+                    send_alert(f"<b>DAILY LOSS CAP</b>\n${pnl_today:,.0f} lost today\nNew buys halted 4h")
+                except Exception:
+                    pass
+                self._save()
+        else:
+            self.state['_daily_cap_hit'] = False
+
         # Fetch ALL tickers once (not per-position)
         try:
             all_ticker_raw = self.client.get_ticker()
@@ -335,6 +355,29 @@ class MomentumScanner:
                 except Exception:
                     pass
             return
+
+        # SAFETY NET 3: Correlated crash detector — if >50% positions underwater, tighten all stops
+        if len(positions) >= 4:
+            underwater = 0
+            for pair, pos in positions.items():
+                cp = float(all_ticker.get(pair, {}).get('LastPrice', 0))
+                if cp > 0 and cp < pos.get('entry_price', 0):
+                    underwater += 1
+            if underwater / len(positions) >= 0.5:
+                log.warning(f"[AltScanner] CORRELATED CRASH: {underwater}/{len(positions)} underwater. Tightening stops!")
+                for pair, pos in positions.items():
+                    cp = float(all_ticker.get(pair, {}).get('LastPrice', 0))
+                    if cp > 0:
+                        emergency_stop = cp * 0.99  # 1% below current
+                        if emergency_stop > pos.get('stop', 0):
+                            pos['stop'] = emergency_stop
+                            log.info(f"[AltScanner] {pair}: EMERGENCY stop → ${emergency_stop:.4f}")
+                try:
+                    from execution.alerts import send_alert
+                    send_alert(f"<b>CORRELATED CRASH</b>\n{underwater}/{len(positions)} underwater\nAll stops tightened to 1%")
+                except Exception:
+                    pass
+                self._save()
 
         for pair, pos in list(positions.items()):  # list() for safe iteration
             if pos.get('sell_failed'):
@@ -600,6 +643,16 @@ class MomentumScanner:
         if now - self.last_scan < SCAN_INTERVAL:
             return
         self.last_scan = now
+
+        # SAFETY NET 1b: Check daily loss halt
+        halt_until = self.state.get('halt_until')
+        if halt_until:
+            try:
+                halt_dt = datetime.strptime(halt_until.replace('+00:00', '').replace('Z', ''), '%Y-%m-%dT%H:%M:%S')
+                if datetime.utcnow() < halt_dt:
+                    return
+            except (ValueError, TypeError):
+                pass
 
         # Market circuit breaker: if fewer than 30% of coins are green, stop buying
         try:
