@@ -15,21 +15,21 @@ EXCLUDED_COINS = {'BONK/USD', 'DOGE/USD'}  # AmountPrecision=0 means whole units
 
 # Scanner config
 MIN_MOMENTUM = 0.01      # 1% minimum 24h change to consider
-MAX_ALT_POSITIONS = 4    # Maximum simultaneous alt positions
-MAX_ALT_EXPOSURE = 0.10  # Max 10% of portfolio in alts total
+MAX_ALT_POSITIONS = 8    # Maximum simultaneous alt positions
+MAX_ALT_EXPOSURE = 0.40  # Max 40% of portfolio in alts total (~$400k)
 ALT_TRAIL_MIN = 0.02     # Minimum trailing stop: 2%
 ALT_TRAIL_MAX = 0.07     # Maximum trailing stop: 7%
-SCAN_INTERVAL = 300      # Scan every 5 minutes (seconds)
+SCAN_INTERVAL = 120      # Scan every 2 minutes (faster entry)
 MIN_PRICE = 0.005        # Minimum coin price to trade
 COIN_COOLDOWN = 1800     # 30 min cooldown per coin after selling (seconds)
 MOMENTUM_REVERSAL = -0.02  # -2% 24h change = real reversal (was -0.5%)
 
 # Hybrid position sizing — stronger momentum = bigger position
 MOMENTUM_TIERS = [
-    (0.10, 60000),   # +10%+ → $60k (very high conviction)
-    (0.06, 40000),   # +6-10% → $40k (high conviction)
-    (0.03, 25000),   # +3-6% → $25k (medium conviction)
-    (0.01, 10000),   # +1-3% → $10k (low conviction)
+    (0.10, 120000),  # +10%+ → $120k (very high conviction)
+    (0.06, 80000),   # +6-10% → $80k (high conviction)
+    (0.03, 50000),   # +3-6% → $50k (medium conviction)
+    (0.01, 20000),   # +1-3% → $20k (low conviction)
 ]
 
 
