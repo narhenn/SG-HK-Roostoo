@@ -77,8 +77,8 @@ def main():
     print("\n=== BUY BTC $100k ===")
     ok, fp, fq, oid = buy(client, 'BTC/USD', 100000, 2, 5)
     if ok:
-        trail = 0.025  # 2.5% stop — backtested 81% WR on last 7 days (vs 72% at 2%)
-        tp_pct = 0.02  # 2% TP for gunner
+        trail = 0.035  # Backtested: wider stops win. 3.5% balances WR vs Calmar
+        tp_pct = 0.03  # Backtested: only TP >= 3% beats pure trailing
         btc_key = 'BTC/USD'
         if btc_key in alt:
             # Merge with existing alt BTC position
