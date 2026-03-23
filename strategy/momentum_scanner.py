@@ -16,13 +16,14 @@ EXCLUDED_COINS = {'BONK/USD', 'DOGE/USD'}  # AmountPrecision=0 means whole units
 # Scanner config
 MIN_MOMENTUM = 0.03      # 3% minimum — only strong movers (was 1%, bought everything)
 MAX_ALT_POSITIONS = 6    # 6 concentrated positions (was 14, too scattered)
-MAX_ALT_EXPOSURE = 0.50  # 50% of portfolio ($500k)
+MAX_ALT_EXPOSURE = 0.20  # 20% of portfolio ($200k) — Pran's recommendation
 ALT_TRAIL_MIN = 0.02     # Minimum trailing stop: 2%
 ALT_TRAIL_MAX = 0.07     # Maximum trailing stop: 7%
-SCAN_INTERVAL = 60       # Scan every 60 seconds (was 30, too aggressive)
+SCAN_INTERVAL = 300      # Scan every 5 minutes (Pran: 30s catches noise)
 MIN_PRICE = 0.005        # Minimum coin price to trade
 COIN_COOLDOWN = 1800     # 30 min cooldown per coin after selling (seconds)
-MOMENTUM_REVERSAL = -0.02  # -2% 24h change = real reversal (was -0.5%)
+MOMENTUM_REVERSAL = -0.005  # -0.5% 24h change = exit (Pran: -2% is too late in crash)
+EMERGENCY_LOSS_PCT = -0.03  # Force-close any position down >3%
 
 # Hybrid position sizing — concentrated on strong movers
 MOMENTUM_TIERS = [
@@ -315,6 +316,31 @@ class MomentumScanner:
 
     def _check_alt_exits(self):
         """Check trailing stops and momentum reversal for alt positions."""
+        positions = self.state.get('alt_positions', {})
+        to_close = []
+
+        # EMERGENCY EXIT: force-close any position down >3% (Pran's fix)
+        try:
+            emergency_ticker = self.client.get_ticker()
+            emergency_data = emergency_ticker.get('Data', {})
+            for pair, pos in list(positions.items()):
+                if pos.get('sell_failed'):
+                    continue
+                ep = float(emergency_data.get(pair, {}).get('LastPrice', 0))
+                if ep <= 0:
+                    continue
+                entry = pos.get('entry_price', 0)
+                if entry > 0 and (ep - entry) / entry < EMERGENCY_LOSS_PCT:
+                    bid = float(emergency_data.get(pair, {}).get('MaxBid', 0))
+                    if bid > 0:
+                        pnl_pct = (ep - entry) / entry
+                        log.warning(f"[AltScanner] {pair}: EMERGENCY EXIT at {pnl_pct:.1%} loss")
+                        self._close_alt_position(pair, bid, 'EMERGENCY_LOSS_CUT', float(emergency_data.get(pair, {}).get('Change', 0)))
+                        time.sleep(1)
+        except Exception as e:
+            log.error(f"[AltScanner] Emergency exit check failed: {e}")
+
+        # Refresh positions after emergency exits
         positions = self.state.get('alt_positions', {})
         to_close = []
 
@@ -637,6 +663,8 @@ class MomentumScanner:
         t.start()
 
     def _check_juinstreet_mode(self):
+        """DISABLED — was auto-buying $800k into crashes. Pran's analysis: this is the opposite of crash protection."""
+        return  # DISABLED
         """JuinStreet mode: detect extreme fear crash → sell all alts → go big on 4 majors.
         Triggers when breadth drops below 15% (extreme crash).
         After buying majors, switches to normal trailing for exit."""
