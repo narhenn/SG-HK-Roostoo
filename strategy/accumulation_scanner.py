@@ -212,6 +212,35 @@ class PriceBuffer:
             return 0.0
         return self.data[pair][-1][2]
 
+    def volatility_ratio(self, pair, short=5, long=30):
+        """Short-term vol / long-term vol. >1.2 = breakout starting."""
+        p = self._prices(pair)
+        if len(p) < long + 1:
+            return 1.0
+        # Compute returns
+        ret = [(p[i] - p[i-1]) / p[i-1] for i in range(1, len(p)) if p[i-1] > 0]
+        if len(ret) < long:
+            return 1.0
+        short_ret = ret[-short:]
+        long_ret = ret[-long:]
+        # Std dev
+        short_mean = sum(short_ret) / len(short_ret)
+        long_mean = sum(long_ret) / len(long_ret)
+        short_vol = (sum((r - short_mean) ** 2 for r in short_ret) / len(short_ret)) ** 0.5
+        long_vol = (sum((r - long_mean) ** 2 for r in long_ret) / len(long_ret)) ** 0.5
+        return short_vol / long_vol if long_vol > 0 else 1.0
+
+    def bid_momentum(self, pair, n=5):
+        """Fraction of last N ticks where bid ticked UP. >0.65 = buying pressure."""
+        if pair not in self.data:
+            return 0.5
+        ticks = list(self.data[pair])
+        if len(ticks) < n + 1:
+            return 0.5
+        recent = ticks[-(n+1):]
+        ups = sum(1 for i in range(1, len(recent)) if recent[i][2] > recent[i-1][2])
+        return ups / n
+
     def returns(self, pair, n=None):
         """Get list of 1-tick returns for a pair."""
         prices = self._prices(pair, n)
@@ -251,6 +280,8 @@ class AccumulationScanner(MomentumScanner):
         super().__init__(client, state, save_state_fn)
         self.buffer = PriceBuffer()
         self.last_scan = 0
+        self._consecutive_losses = 0
+        self._loss_cooldown_until = 0
 
     def _score(self, pair, info):
         """Score coin for accumulation (0-100). Returns (score, [reasons])."""
@@ -314,6 +345,20 @@ class AccumulationScanner(MomentumScanner):
             rs = 0
         s += rs
         r.append("rsi%.0f=%d" % (rsi, rs))
+
+        # Volatility ratio bonus: breakout starting (short vol > long vol)
+        vr_ratio = self.buffer.volatility_ratio(pair)
+        if vr_ratio > 1.2:
+            vr_bonus = min(10, int((vr_ratio - 1.0) * 20))
+            s += vr_bonus
+            r.append("vr_brk%.1f=%d" % (vr_ratio, vr_bonus))
+
+        # Bid momentum bonus: buying pressure building
+        bm = self.buffer.bid_momentum(pair)
+        if bm > 0.65:
+            bm_bonus = min(10, int((bm - 0.5) * 40))
+            s += bm_bonus
+            r.append("bid%.0f%%=%d" % (bm * 100, bm_bonus))
 
         return s, r
 
@@ -486,6 +531,12 @@ class AccumulationScanner(MomentumScanner):
 
         gate_ok, regime_boost = self._btc_gate(ticker_data=all_data)
         if not gate_ok:
+            return
+
+        # Consecutive loss cooldown: 3 losses in a row = pause 30 min
+        if time.time() < self._loss_cooldown_until:
+            log.info("[AccumScan] Loss cooldown active (3 consecutive losses). Resuming in %.0f min" % (
+                (self._loss_cooldown_until - time.time()) / 60))
             return
 
         # Count only NEW positions (accumulation + btc_lag) against the cap.
@@ -806,6 +857,16 @@ class AccumulationScanner(MomentumScanner):
         for i, (pair, bid, reason, chg) in enumerate(to_close):
             if i > 0:
                 time.sleep(2)
+            # Track consecutive losses for cooldown
+            pos = self.state.get('alt_positions', {}).get(pair, {})
+            entry = pos.get('entry_price', 0)
+            if entry > 0 and bid < entry:
+                self._consecutive_losses += 1
+                if self._consecutive_losses >= 3:
+                    self._loss_cooldown_until = time.time() + 1800  # 30 min cooldown
+                    log.warning("[AccumScan] 3 consecutive losses — cooling down 30 min")
+            else:
+                self._consecutive_losses = 0  # Reset on any win
             self._close_alt_position(pair, bid, reason, chg)
         self._save()
 

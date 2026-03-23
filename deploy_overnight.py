@@ -71,13 +71,14 @@ def main():
 
     results = []
 
-    # Buy BTC ($150k) — tracked as BTC/USD in alt_positions
+    # Buy BTC ($100k) — tracked as BTC/USD in alt_positions
     # (separate from exec_btc which is the main BTC strategy position)
-    print("\n=== BUY BTC $150k ===")
-    ok, fp, fq, oid = buy(client, 'BTC/USD', 150000, 2, 5)
+    # $100k not $150k: protects Calmar if market drops 3% (drawdown 1.3% not 1.5%)
+    print("\n=== BUY BTC $100k ===")
+    ok, fp, fq, oid = buy(client, 'BTC/USD', 100000, 2, 5)
     if ok:
-        trail = 0.025  # 2.5% stop — survives overnight noise (BTC ranges 3-5% intraday)
-        tp_pct = 0.02   # 2% TP for gunner
+        trail = 0.02   # 2% stop — protects Calmar while surviving overnight noise
+        tp_pct = 0.02  # 2% TP for gunner
         btc_key = 'BTC/USD'
         if btc_key in alt:
             # Merge with existing alt BTC position
