@@ -601,6 +601,19 @@ class MomentumScanner:
             return
         self.last_scan = now
 
+        # Market circuit breaker: if fewer than 30% of coins are green, stop buying
+        try:
+            all_tickers = self.client.get_ticker()
+            all_data = all_tickers.get('Data', {})
+            total_coins = len(all_data)
+            green_coins = sum(1 for p, i in all_data.items() if float(i.get('Change', 0)) > 0)
+            breadth = green_coins / total_coins if total_coins > 0 else 0
+            if breadth < 0.30:
+                log.info(f"[AltScanner] Market breadth {breadth:.0%} < 30% — no new buys (circuit breaker)")
+                return
+        except Exception:
+            pass
+
         # Don't open new positions if already at max
         current_alts = len(self.state.get('alt_positions', {}))
         if current_alts >= MAX_ALT_POSITIONS:
