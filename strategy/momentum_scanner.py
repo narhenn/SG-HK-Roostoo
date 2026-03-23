@@ -637,15 +637,126 @@ class MomentumScanner:
         t = threading.Thread(target=_monitor_loop, daemon=True)
         t.start()
 
+    def _check_juinstreet_mode(self):
+        """JuinStreet mode: detect extreme fear crash → sell all alts → go big on 4 majors.
+        Triggers when breadth drops below 15% (extreme crash).
+        After buying majors, switches to normal trailing for exit."""
+        if self.state.get('_juinstreet_active'):
+            return  # Already in JuinStreet mode, let positions trail
+
+        try:
+            all_ticker_raw = self.client.get_ticker()
+            all_data = all_ticker_raw.get('Data', {})
+            total_coins = len(all_data)
+            green_coins = sum(1 for p, i in all_data.items() if float(i.get('Change', 0)) > 0)
+            breadth = green_coins / total_coins if total_coins > 0 else 0.5
+
+            # Only trigger on EXTREME crash (breadth < 15%)
+            if breadth >= 0.15:
+                return
+
+            log.warning(f"[JuinStreet] EXTREME FEAR DETECTED! Breadth={breadth:.0%}. Activating crash buy mode.")
+
+            try:
+                from execution.alerts import send_alert
+                send_alert(f"<b>JUINSTREET MODE ACTIVATED</b>\nBreadth: {breadth:.0%}\nSelling all alts, buying 4 majors")
+            except Exception:
+                pass
+
+            # Step 1: Sell ALL alt positions
+            positions = dict(self.state.get('alt_positions', {}))
+            for pair, pos in positions.items():
+                try:
+                    ticker = all_data.get(pair, {})
+                    bid = float(ticker.get('MaxBid', 0))
+                    if bid > 0:
+                        self._close_alt_position(pair, bid, 'JUINSTREET_CLEAR', float(ticker.get('Change', 0)))
+                except Exception as e:
+                    log.error(f"[JuinStreet] Failed to sell {pair}: {e}")
+                time.sleep(1)
+
+            # Step 2: Wait 2 seconds for sells to settle
+            time.sleep(2)
+
+            # Step 3: Buy 4 majors with equal weight
+            exchange_info = self._get_exchange_info()
+            equity = self.state.get('current_equity', 1000000)
+            per_coin = equity * 0.20  # 20% each = 80% total deployed
+
+            majors = ['BTC/USD', 'ETH/USD', 'SOL/USD', 'BNB/USD']
+            for pair in majors:
+                try:
+                    ticker = all_data.get(pair, {})
+                    ask = float(ticker.get('MinAsk', 0))
+                    if ask <= 0:
+                        continue
+
+                    prec = self._get_precision(pair, exchange_info)
+                    qty = round(per_coin / ask, prec['amount_precision'])
+                    limit_price = round(ask, prec['price_precision'])
+
+                    if qty <= 0:
+                        continue
+
+                    order = self.client.place_order(pair, "BUY", "LIMIT", qty, limit_price)
+                    detail = order.get("OrderDetail", order)
+                    order_id = detail.get("OrderID") or order.get("OrderID")
+                    filled_qty = float(detail.get("FilledQuantity", 0) or 0)
+                    avg_price = float(detail.get("FilledAverPrice", 0) or 0)
+                    status = (detail.get("Status") or "").upper()
+
+                    if order_id and (status in ("FILLED", "COMPLETED") or filled_qty > 0):
+                        fill_price = avg_price or limit_price
+                        fill_qty = filled_qty or qty
+                        trail_pct = 0.03  # 3% trail for majors
+
+                        self.state['alt_positions'][pair] = {
+                            'entry_price': fill_price,
+                            'qty': fill_qty,
+                            'peak_price': fill_price,
+                            'trail_pct': trail_pct,
+                            'tp_price': 0,  # No TP — let it run with trailing stop
+                            'tp_pct': 0,
+                            'stop': fill_price * (1 - trail_pct),
+                            'entry_time': datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S'),
+                            'entry_change': 0,
+                            'order_id': order_id,
+                            'price_precision': prec['price_precision'],
+                            'amount_precision': prec['amount_precision'],
+                        }
+                        log.info(f"[JuinStreet] BOUGHT {pair}: qty={fill_qty} price=${fill_price:.2f} size=${fill_qty*fill_price:,.0f}")
+                        try:
+                            from execution.alerts import send_alert
+                            send_alert(f"<b>JUINSTREET BUY {pair}</b>\nPrice: ${fill_price:,.2f}\nSize: ${fill_qty*fill_price:,.0f}")
+                        except Exception:
+                            pass
+                    time.sleep(2)
+                except Exception as e:
+                    log.error(f"[JuinStreet] Failed to buy {pair}: {e}")
+
+            self.state['_juinstreet_active'] = True
+            self._save()
+            log.info("[JuinStreet] Mode active. 4 majors bought. Trailing stops will manage exits.")
+
+        except Exception as e:
+            log.error(f"[JuinStreet] Mode check failed: {e}")
+
     def run_cycle(self):
         """Run one scanner cycle. Call from main loop."""
         now = time.time()
+
+        # Check JuinStreet mode (extreme fear → sell alts → buy 4 majors)
+        self._check_juinstreet_mode()
 
         # Exit checks handled by alt monitor thread (every 1.5s)
         # Scan for new entries every SCAN_INTERVAL
         if now - self.last_scan < SCAN_INTERVAL:
             return
         self.last_scan = now
+
+        # If JuinStreet mode is active, don't scan for new alt entries
+        if self.state.get('_juinstreet_active'):
+            return
 
         # SAFETY NET 1b: Check daily loss halt
         halt_until = self.state.get('halt_until')
