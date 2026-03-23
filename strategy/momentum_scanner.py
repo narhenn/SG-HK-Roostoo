@@ -359,35 +359,8 @@ class MomentumScanner:
                     pos['stop'] = price * (1 - new_trail)
                     log.info(f"[AltScanner] {pair}: new peak ${price:.4f}, trail={new_trail:.1%}, stop ${pos['stop']:.4f}")
 
-                # Time-decaying TP: lower the target as position ages
+                # Runner-Gunner take profit (fixed TP, no time decay — let recoveries run)
                 tp_price = pos.get('tp_price', 0)
-                if tp_price > 0 and not pos.get('gunner_fired'):
-                    entry_time_str = pos.get('entry_time', '')
-                    if entry_time_str:
-                        try:
-                            clean_t = entry_time_str.replace('+00:00', '').replace('Z', '')
-                            try:
-                                et = datetime.strptime(clean_t, '%Y-%m-%dT%H:%M:%S.%f')
-                            except ValueError:
-                                et = datetime.strptime(clean_t, '%Y-%m-%dT%H:%M:%S')
-                            mins_held = (datetime.utcnow() - et).total_seconds() / 60
-                            original_tp_pct = pos.get('tp_pct', 0.015)
-
-                            # Decay schedule: full → 2/3 → 1/2 → min 1.5%
-                            if mins_held > 60:
-                                decayed_pct = max(original_tp_pct * 0.4, 0.015)
-                            elif mins_held > 30:
-                                decayed_pct = max(original_tp_pct * 0.6, 0.015)
-                            elif mins_held > 15:
-                                decayed_pct = max(original_tp_pct * 0.8, 0.015)
-                            else:
-                                decayed_pct = original_tp_pct
-
-                            tp_price = entry * (1 + decayed_pct)
-                        except (ValueError, TypeError):
-                            pass
-
-                # Runner-Gunner take profit
                 if tp_price > 0 and price >= tp_price and not pos.get('gunner_fired'):
                     tp_pct = pos.get('tp_pct', 0)
                     log.info(f"[AltScanner] {pair}: GUNNER TP at ${price:.4f} (+{tp_pct*100:.1f}%). Selling 70%, runner stays.")
