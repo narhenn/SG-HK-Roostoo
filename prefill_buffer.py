@@ -102,8 +102,12 @@ def try_binance_prefill():
     # Also fetch 5-min and 1-hour for higher-timeframe trend context
     # Store in separate files the scanner can read
     for tf_label, tf_interval, tf_limit, tf_file in [
-        ('5-min', '5m', 300, 'data/price_buffer_5m.jsonl'),
-        ('1-hour', '1h', 300, 'data/price_buffer_1h.jsonl'),
+        ('3-min', '3m', 500, 'data/price_buffer_3m.jsonl'),
+        ('5-min', '5m', 500, 'data/price_buffer_5m.jsonl'),
+        ('15-min', '15m', 500, 'data/price_buffer_15m.jsonl'),
+        ('1-hour', '1h', 500, 'data/price_buffer_1h.jsonl'),
+        ('4-hour', '4h', 500, 'data/price_buffer_4h.jsonl'),
+        ('1-day', '1d', 365, 'data/price_buffer_1d.jsonl'),
     ]:
         print("\nFetching %s candles..." % tf_label)
         tf_ticks = {}

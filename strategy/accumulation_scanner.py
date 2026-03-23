@@ -279,17 +279,18 @@ class AccumulationScanner(MomentumScanner):
     def __init__(self, client, state, save_state_fn=None):
         super().__init__(client, state, save_state_fn)
         self.buffer = PriceBuffer()
-        self.buffer_1h = PriceBuffer.__new__(PriceBuffer)
-        self.buffer_1h.data = {}
-        self.buffer_1h.tick_count = 0
-        # Load 1H buffer if available (from Binance prefill)
-        try:
-            import os as _os
-            if _os.path.exists('data/price_buffer_1h.jsonl'):
-                self.buffer_1h._load = PriceBuffer._load
-                # Manual load
+        # Load higher-timeframe buffers (from Binance prefill)
+        self._htf_buffers = {}  # {'1h': {pair: [prices]}, '4h': {...}, '1d': {...}}
+        for tf, filename in [('15m', 'data/price_buffer_15m.jsonl'),
+                             ('1h', 'data/price_buffer_1h.jsonl'),
+                             ('4h', 'data/price_buffer_4h.jsonl'),
+                             ('1d', 'data/price_buffer_1d.jsonl')]:
+            try:
+                if not os.path.exists(filename):
+                    continue
+                buf = {}
                 loaded = 0
-                with open('data/price_buffer_1h.jsonl', 'r') as f:
+                with open(filename, 'r') as f:
                     for line in f:
                         line = line.strip()
                         if not line:
@@ -297,32 +298,46 @@ class AccumulationScanner(MomentumScanner):
                         try:
                             e = json.loads(line)
                             p = e['pair']
-                            if p not in self.buffer_1h.data:
-                                self.buffer_1h.data[p] = deque(maxlen=300)
-                            self.buffer_1h.data[p].append(tuple(e['t']))
+                            if p not in buf:
+                                buf[p] = []
+                            buf[p].append(e['t'][1])  # just price
                             loaded += 1
                         except (json.JSONDecodeError, KeyError, TypeError):
                             continue
                 if loaded > 0:
-                    self.buffer_1h.tick_count = max(len(d) for d in self.buffer_1h.data.values())
-                    log.info("[AccumScan] Loaded 1H buffer: %d ticks, %d pairs" % (loaded, len(self.buffer_1h.data)))
-        except Exception as e:
-            log.error("[AccumScan] Failed to load 1H buffer: %s" % e)
+                    self._htf_buffers[tf] = buf
+                    log.info("[AccumScan] Loaded %s buffer: %d ticks, %d pairs" % (tf, loaded, len(buf)))
+            except Exception as e:
+                log.error("[AccumScan] Failed to load %s buffer: %s" % (tf, e))
         self.last_scan = 0
         self._consecutive_losses = 0
         self._loss_cooldown_until = 0
 
     def _htf_trend_ok(self, pair):
-        """Check if higher timeframe (1H) trend is UP. Returns True if up or no data."""
-        if not self.buffer_1h.data.get(pair):
-            return True  # No data = don't block
-        prices = [t[1] for t in self.buffer_1h.data[pair]]
-        if len(prices) < 20:
-            return True
-        sma20 = sum(prices[-20:]) / 20
-        current = prices[-1]
-        # Price above 1H SMA20 = uptrend
-        return current >= sma20
+        """Multi-timeframe trend check. Returns (ok, score).
+        Score: +1 per bullish timeframe, -1 per bearish. Need >= 0 to enter."""
+        score = 0
+        checked = 0
+
+        for tf, sma_period in [('15m', 20), ('1h', 20), ('4h', 20), ('1d', 20)]:
+            buf = self._htf_buffers.get(tf, {})
+            prices = buf.get(pair, [])
+            if len(prices) < sma_period:
+                continue
+            checked += 1
+            sma = sum(prices[-sma_period:]) / sma_period
+            current = prices[-1]
+            if current >= sma:
+                score += 1  # Bullish on this timeframe
+            else:
+                score -= 1  # Bearish
+
+        if checked == 0:
+            return True  # No HTF data = don't block
+
+        # Need at least neutral (score >= 0) to enter
+        # Bonus: if all timeframes agree bullish, score = checked
+        return score >= 0
 
     def _score(self, pair, info):
         """Score coin for accumulation (0-100). Returns (score, [reasons])."""
@@ -352,9 +367,9 @@ class AccumulationScanner(MomentumScanner):
         if sm > 0 and cp < sm:
             return 0, ["below_sma"]
 
-        # Higher timeframe trend check (1H)
+        # Multi-timeframe trend check (15m/1h/4h/daily)
         if not self._htf_trend_ok(pair):
-            return 0, ["1h_downtrend"]
+            return 0, ["htf_downtrend"]
 
         # ── Scoring ──
         s = 0
