@@ -20,6 +20,87 @@ EXCLUDED = {'BONK/USD', 'DOGE/USD', 'SHIB/USD', 'PEPE/USD', 'FLOKI/USD',
             'PAXG/USD', '1000CHEEMS/USD', 'PUMP/USD'}
 
 
+BINANCE_MAP = {
+    'BTC/USD': 'BTCUSDT', 'ETH/USD': 'ETHUSDT', 'BNB/USD': 'BNBUSDT',
+    'SOL/USD': 'SOLUSDT', 'XRP/USD': 'XRPUSDT', 'ADA/USD': 'ADAUSDT',
+    'AVAX/USD': 'AVAXUSDT', 'LINK/USD': 'LINKUSDT', 'DOT/USD': 'DOTUSDT',
+    'SUI/USD': 'SUIUSDT', 'HBAR/USD': 'HBARUSDT', 'FIL/USD': 'FILUSDT',
+    'NEAR/USD': 'NEARUSDT', 'UNI/USD': 'UNIUSDT', 'AAVE/USD': 'AAVEUSDT',
+    'LTC/USD': 'LTCUSDT', 'FET/USD': 'FETUSDT', 'WIF/USD': 'WIFUSDT',
+    'PENDLE/USD': 'PENDLEUSDT', 'CRV/USD': 'CRVUSDT', 'TON/USD': 'TONUSDT',
+    'ARB/USD': 'ARBUSDT', 'ONDO/USD': 'ONDOUSDT', 'DOGE/USD': 'DOGEUSDT',
+    'TRX/USD': 'TRXUSDT', 'CAKE/USD': 'CAKEUSDT', 'XLM/USD': 'XLMUSDT',
+    'EIGEN/USD': 'EIGENUSDT', 'FORM/USD': 'FORMUSDT', 'WLD/USD': 'WLDUSDT',
+    'ICP/USD': 'ICPUSDT', 'ENA/USD': 'ENAUSDT', 'SEI/USD': 'SEIUSDT',
+    'TRUMP/USD': 'TRUMPUSDT', 'APT/USD': 'APTUSDT', 'TAO/USD': 'TAOUSDT',
+    'VIRTUAL/USD': 'VIRTUALUSDT', 'POL/USD': 'POLUSDT',
+}
+
+
+def try_binance_prefill():
+    """Try to fetch 300 1-min candles from Binance for all coins. Returns True if successful."""
+    import requests
+    print("Trying Binance API from EC2...")
+    try:
+        resp = requests.get('https://api.binance.com/api/v3/klines',
+            params={'symbol': 'BTCUSDT', 'interval': '1m', 'limit': 5}, timeout=10)
+        if resp.status_code != 200:
+            print("Binance returned %d — blocked from EC2" % resp.status_code)
+            return False
+        print("Binance WORKS from EC2! Fetching 300 candles for all coins...")
+    except Exception as e:
+        print("Binance blocked: %s" % e)
+        return False
+
+    all_ticks = {}
+    fetched = 0
+    for roostoo_pair, binance_sym in BINANCE_MAP.items():
+        if roostoo_pair in EXCLUDED:
+            continue
+        try:
+            resp = requests.get('https://api.binance.com/api/v3/klines',
+                params={'symbol': binance_sym, 'interval': '1m', 'limit': 300}, timeout=10)
+            if resp.status_code != 200:
+                continue
+            klines = resp.json()
+            if not isinstance(klines, list) or len(klines) < 10:
+                continue
+
+            ticks = []
+            for k in klines:
+                ts = k[0] / 1000  # ms to seconds
+                close = float(k[4])
+                high = float(k[2])
+                low = float(k[3])
+                vol = float(k[5])  # base volume, not quote
+                bid = close - (high - low) * 0.01  # approximate bid
+                ask = close + (high - low) * 0.01  # approximate ask
+                spread = (ask - bid) / close if close > 0 else 0
+                ticks.append((ts, close, bid, ask, vol, spread))
+
+            all_ticks[roostoo_pair] = ticks
+            fetched += 1
+            print("  %s (%s): %d candles" % (roostoo_pair, binance_sym, len(ticks)))
+            time.sleep(0.1)  # Be nice to Binance
+        except Exception as e:
+            print("  %s: failed (%s)" % (binance_sym, str(e)[:50]))
+
+    if fetched < 5:
+        print("Only got %d coins from Binance — falling back to Roostoo polling" % fetched)
+        return False
+
+    # Write buffer
+    print("\nWriting %d coins to buffer..." % len(all_ticks))
+    with open(BUFFER_FILE, 'w') as f:
+        for pair, ticks in all_ticks.items():
+            for tk in ticks:
+                f.write(json.dumps({'pair': pair, 't': list(tk)}) + '\n')
+
+    total = sum(len(t) for t in all_ticks.values())
+    print("Binance prefill complete: %d pairs, %d total ticks" % (len(all_ticks), total))
+    return True
+
+
 def main():
     client = RoostooClient()
 
@@ -27,6 +108,12 @@ def main():
     if os.path.exists(BUFFER_FILE):
         os.rename(BUFFER_FILE, BUFFER_FILE + '.old')
         print("Old buffer backed up")
+
+    # Try Binance first (300 real 1-min candles instantly)
+    if try_binance_prefill():
+        print("\nBuffer prefilled from Binance! Scanner ready immediately.")
+        print("Start bot: sudo systemctl start bot.service")
+        return
 
     print("Prefilling buffer: %d ticks at %ds intervals (~%d min)" % (
         TICKS_NEEDED, POLL_INTERVAL, TICKS_NEEDED * POLL_INTERVAL // 60))
