@@ -36,6 +36,17 @@ BTC_RSI_1M_GATE = 80
 MIN_VOLUME_USD = 3_000_000
 ENTRY_SCORE_MIN = 65
 
+# BTC Beta Lag parameters
+BTC_MOVE_THRESHOLD = 0.003  # BTC must move +0.3% in 3 ticks
+BTC_MOVE_LOOKBACK = 3       # Check last 3 ticks
+ALT_LAG_MAX_MOVE = 0.001    # Alt must have moved < 0.1% (hasn't followed)
+BETA_MIN = 1.0              # Minimum BTC beta to qualify
+BETA_WINDOW = 60            # 60-tick rolling window for beta calc
+LAG_TRAIL_PCT = 0.005       # 0.5% tighter trail for lag trades (faster exit)
+LAG_TP_PCT = 0.01           # 1.0% TP for lag trades (quicker profit)
+LAG_TIME_STOP_MIN = 20      # 20 min — if alt hasn't followed by now, thesis is dead
+LAG_SIZE_MULT = 0.8         # Slightly smaller size (less conviction than accumulation)
+
 # Position management
 MAX_POSITIONS = 6
 POS_SIZE_BASE = 0.03
@@ -193,6 +204,37 @@ class PriceBuffer:
             return 0.0
         return self.data[pair][-1][2]
 
+    def returns(self, pair, n=None):
+        """Get list of 1-tick returns for a pair."""
+        prices = self._prices(pair, n)
+        if len(prices) < 2:
+            return []
+        return [(prices[i] - prices[i-1]) / prices[i-1] for i in range(1, len(prices)) if prices[i-1] > 0]
+
+    def beta(self, pair, window=BETA_WINDOW):
+        """Compute rolling beta of alt vs BTC. Returns (beta, correlation)."""
+        btc_ret = self.returns('BTC/USD', window + 1)
+        alt_ret = self.returns(pair, window + 1)
+        n = min(len(btc_ret), len(alt_ret))
+        if n < 20:
+            return 0.0, 0.0
+        # Use last n returns
+        br = btc_ret[-n:]
+        ar = alt_ret[-n:]
+        # Compute covariance and variance
+        mean_b = sum(br) / n
+        mean_a = sum(ar) / n
+        cov = sum((ar[i] - mean_a) * (br[i] - mean_b) for i in range(n)) / n
+        var_b = sum((br[i] - mean_b) ** 2 for i in range(n)) / n
+        var_a = sum((ar[i] - mean_a) ** 2 for i in range(n)) / n
+        if var_b == 0:
+            return 0.0, 0.0
+        beta_val = cov / var_b
+        # Correlation
+        denom = (var_a * var_b) ** 0.5
+        corr = cov / denom if denom > 0 else 0.0
+        return beta_val, corr
+
 
 class AccumulationScanner(MomentumScanner):
     """Accumulation-based scanner. Inherits exit/close logic from MomentumScanner."""
@@ -285,6 +327,59 @@ class AccumulationScanner(MomentumScanner):
             pass
         return True
 
+    def _find_btc_lag_candidates(self, all_data):
+        """Find alts that should follow BTC but haven't yet."""
+        # Check if BTC made a significant move
+        btc_move = self.buffer.roc('BTC/USD', BTC_MOVE_LOOKBACK)
+        if btc_move < BTC_MOVE_THRESHOLD:
+            return []  # BTC hasn't moved enough
+
+        log.info("[BtcLag] BTC moved %.2f%% in %d ticks — scanning for lagging alts" % (
+            btc_move * 100, BTC_MOVE_LOOKBACK))
+
+        candidates = []
+        for pair, info in all_data.items():
+            if pair in EXCLUDED or pair == 'BTC/USD':
+                continue
+            if pair in self.state.get('alt_positions', {}):
+                continue
+            cd = self.state.get('alt_cooldowns', {}).get(pair, 0)
+            if time.time() - cd < 1800:
+                continue
+            if not self.buffer.ready(pair, 30):
+                continue
+
+            # Check alt hasn't moved yet
+            alt_move = abs(self.buffer.roc(pair, BTC_MOVE_LOOKBACK))
+            if alt_move > ALT_LAG_MAX_MOVE:
+                continue  # Alt already moved, no lag to exploit
+
+            # Check beta — needs to be correlated with BTC
+            beta_val, corr = self.buffer.beta(pair)
+            if beta_val < BETA_MIN or corr < 0.3:
+                continue  # Not correlated enough
+
+            # Check spread and volume
+            sp = self.buffer.spread(pair)
+            if sp > SPREAD_MAX:
+                continue
+            vol24 = float(info.get('CoinTradeValue', 0))
+            if vol24 < MIN_VOLUME_USD:
+                continue
+
+            # Check price is above SMA (not in downtrend)
+            sm = self.buffer.sma(pair)
+            cp = self.buffer.price(pair)
+            if sm > 0 and cp < sm:
+                continue
+
+            # Score by beta * correlation (higher = more likely to follow)
+            score = beta_val * corr * 100
+            candidates.append((score, pair, info, beta_val, corr))
+
+        candidates.sort(key=lambda x: -x[0])
+        return candidates[:3]  # Top 3 laggards
+
     def _calc_size(self, pair, info):
         eq = self.state.get('current_equity', 1000000)
         base = eq * POS_SIZE_BASE
@@ -341,6 +436,96 @@ class AccumulationScanner(MomentumScanner):
         if n_pos >= MAX_POSITIONS:
             return
 
+        # ── Strategy 1: BTC Beta Lag (runs every cycle, faster response) ──
+        if self.buffer.tick_count >= 30:
+            lag_cands = self._find_btc_lag_candidates(all_data)
+            if lag_cands:
+                exinfo_lag = self._get_exchange_info()
+                if exinfo_lag:
+                    for score, pair, info, beta_val, corr in lag_cands:
+                        if n_pos >= MAX_POSITIONS:
+                            break
+                        sz = self._calc_size(pair, info)
+                        sz = sz * LAG_SIZE_MULT  # Slightly smaller for lag trades
+                        if sz < 1000:
+                            continue
+
+                        ask_price = float(info.get('MinAsk', 0))
+                        if ask_price <= 0:
+                            continue
+
+                        prec = exinfo_lag.get(pair, {})
+                        pp = int(prec.get('PricePrecision', 4))
+                        ap_val = int(prec.get('AmountPrecision', 2))
+                        am = 10 ** ap_val
+                        qty = math.floor(sz / ask_price * am) / am
+                        if qty <= 0:
+                            continue
+                        lp = round(ask_price, pp)
+
+                        log.info("[BtcLag] SIGNAL %s beta=%.2f corr=%.2f $%d" % (
+                            pair, beta_val, corr, sz))
+
+                        try:
+                            order = self.client.place_order(pair, "BUY", "LIMIT", qty, lp)
+                            det = order.get("OrderDetail", order)
+                            oid = det.get("OrderID") or order.get("OrderID")
+                            fq = float(det.get("FilledQuantity", 0) or 0)
+                            ap2 = float(det.get("FilledAverPrice", 0) or 0)
+                            st = str(det.get("Status", "")).upper()
+
+                            if not oid or (st not in ("FILLED", "COMPLETED", "") and fq <= 0):
+                                continue
+
+                            fp = ap2 or lp
+                            fqty = fq or qty
+
+                            with _alt_lock:
+                                self.state['alt_positions'][pair] = {
+                                    'entry_price': fp,
+                                    'qty': fqty,
+                                    'peak_price': fp,
+                                    'trail_pct': LAG_TRAIL_PCT,
+                                    'tp_price': round(fp * (1 + LAG_TP_PCT), pp),
+                                    'tp_pct': LAG_TP_PCT,
+                                    'stop': round(fp * (1 - LAG_TRAIL_PCT), pp),
+                                    'entry_time': datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S'),
+                                    'order_id': oid,
+                                    'entry_change': float(info.get('Change', 0)),
+                                    'price_precision': pp,
+                                    'amount_precision': ap_val,
+                                    'entry_type': 'btc_lag',
+                                    'entry_beta': beta_val,
+                                    'entry_corr': corr,
+                                }
+                                self._save()
+                            n_pos += 1
+
+                            log.info("[BtcLag] BOUGHT %s: %s@$%.4f=$%.0f beta=%.2f" % (
+                                pair, fqty, fp, fqty*fp, beta_val))
+                            try:
+                                from execution.alerts import send_alert
+                                send_alert(
+                                    "<b>BTC LAG BUY %s</b>\n"
+                                    "Beta: %.2f | Corr: %.2f\n"
+                                    "$%s | Stop: -%.1f%%\n"
+                                    "BTC moved +%.2f%%, alt hasn't followed" % (
+                                        pair, beta_val, corr,
+                                        format(int(fqty*fp), ','),
+                                        LAG_TRAIL_PCT*100,
+                                        self.buffer.roc('BTC/USD', BTC_MOVE_LOOKBACK)*100))
+                            except Exception:
+                                pass
+                            time.sleep(2)
+                        except Exception as e:
+                            log.error("[BtcLag] %s: BUY error: %s" % (pair, e))
+
+        # Recheck position count after lag trades
+        n_pos = len(self.state.get('alt_positions', {}))
+        if n_pos >= MAX_POSITIONS:
+            return
+
+        # ── Strategy 2: Accumulation Detection ──
         # Score all coins
         cands = []
         for pair, info in all_data.items():
@@ -493,15 +678,17 @@ class AccumulationScanner(MomentumScanner):
                 peak = pos.get('peak_price', entry)
                 pnl = (price - entry) / entry
 
-                # Time stop (accumulation only, pre-gunner)
-                if pos.get('entry_type') == 'accumulation' and not pos.get('gunner_fired'):
+                # Time stop (accumulation + btc_lag, pre-gunner)
+                etype = pos.get('entry_type', '')
+                if etype in ('accumulation', 'btc_lag') and not pos.get('gunner_fired'):
+                    ts_limit = LAG_TIME_STOP_MIN if etype == 'btc_lag' else TIME_STOP_MIN
                     et = pos.get('entry_time', '')
                     if et:
                         try:
                             edt = datetime.strptime(et, '%Y-%m-%dT%H:%M:%S')
                             mins = (datetime.utcnow() - edt).total_seconds() / 60
-                            if mins > TIME_STOP_MIN and pnl < FLAT_THRESHOLD:
-                                log.info("[AccumScan] %s: TIME STOP %.0fmin P&L=%.2f%%" % (pair, mins, pnl*100))
+                            if mins > ts_limit and pnl < FLAT_THRESHOLD:
+                                log.info("[AccumScan] %s: TIME STOP %.0fmin P&L=%.2f%% (type=%s)" % (pair, mins, pnl*100, etype))
                                 to_close.append((pair, bid, 'TIME_STOP', chg))
                                 continue
                         except (ValueError, TypeError):
