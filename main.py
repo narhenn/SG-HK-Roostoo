@@ -638,10 +638,13 @@ class TradingBot:
             send_alert(f"<b>POSITION RECOVERED</b>\nRestarting stop monitor for open position")
             self.executor.start_stop_monitor(atr_14, entry_regime)
 
+        # Start alt monitor thread (checks exits every 1.5s)
+        self.alt_scanner.start_alt_monitor()
+
         while self.running:
             try:
                 self.run_cycle()
-                # Alt coin momentum scanner runs independently of BTC signals
+                # Alt coin scanner: only handles new entries (exits handled by monitor thread)
                 try:
                     self.alt_scanner.run_cycle()
                 except Exception as e:

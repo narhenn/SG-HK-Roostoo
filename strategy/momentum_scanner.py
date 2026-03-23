@@ -5,6 +5,7 @@ Runs alongside the main BTC strategy.
 """
 import logging
 import time
+import threading
 from datetime import datetime
 
 log = logging.getLogger("TradingBot")
@@ -602,14 +603,26 @@ class MomentumScanner:
         except Exception as e:
             log.error(f"[AltScanner] {pair}: SELL failed: {e}")
 
+    def start_alt_monitor(self):
+        """Start a background thread that checks alt exits every 1.5 seconds."""
+        def _monitor_loop():
+            log.info("[AltMonitor] Thread started. Checking every 1.5s.")
+            while True:
+                try:
+                    if self.state.get('alt_positions'):
+                        self._check_alt_exits()
+                except Exception as e:
+                    log.error(f"[AltMonitor] Error: {e}")
+                time.sleep(1.5)
+
+        t = threading.Thread(target=_monitor_loop, daemon=True)
+        t.start()
+
     def run_cycle(self):
         """Run one scanner cycle. Call from main loop."""
         now = time.time()
 
-        # Always check exits on every cycle (every 60s)
-        if self.state.get('alt_positions'):
-            self._check_alt_exits()
-
+        # Exit checks handled by alt monitor thread (every 1.5s)
         # Scan for new entries every SCAN_INTERVAL
         if now - self.last_scan < SCAN_INTERVAL:
             return
