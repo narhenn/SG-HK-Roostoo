@@ -317,7 +317,7 @@ class AccumulationScanner(MomentumScanner):
 
         return s, r
 
-    def _btc_gate(self):
+    def _btc_gate(self, ticker_data=None):
         """Check if BTC allows alt entries. Returns (allowed, boost_factor).
         boost_factor > 1.0 means high-conviction regime (e.g., cascade fade)."""
         boost = 1.0
@@ -328,10 +328,13 @@ class AccumulationScanner(MomentumScanner):
             log.info("[Gate] BTC RSI %.0f > %d — blocked" % (br, BTC_RSI_1M_GATE))
             return False, 0
 
-        # Gate 2: Market breadth
+        # Gate 2: Market breadth (use already-fetched ticker if available)
         try:
-            tk = self.client.get_ticker()
-            d = tk.get('Data', {})
+            if ticker_data:
+                d = ticker_data
+            else:
+                tk = self.client.get_ticker()
+                d = tk.get('Data', {})
             total = len(d)
             green = sum(1 for v in d.values() if float(v.get('Change', 0)) > 0)
             breadth = green / total if total > 0 else 0.5
@@ -481,12 +484,15 @@ class AccumulationScanner(MomentumScanner):
             except (ValueError, TypeError):
                 pass
 
-        gate_ok, regime_boost = self._btc_gate()
+        gate_ok, regime_boost = self._btc_gate(ticker_data=all_data)
         if not gate_ok:
             return
 
-        n_pos = len(self.state.get('alt_positions', {}))
-        if n_pos >= MAX_POSITIONS:
+        # Count only NEW positions (accumulation + btc_lag) against the cap.
+        # Legacy momentum positions manage themselves via trailing stops.
+        all_pos = self.state.get('alt_positions', {})
+        n_new = sum(1 for p in all_pos.values() if p.get('entry_type') in ('accumulation', 'btc_lag'))
+        if n_new >= MAX_POSITIONS:
             return
 
         # ── Strategy 1: BTC Beta Lag (runs every cycle, faster response) ──
@@ -496,7 +502,7 @@ class AccumulationScanner(MomentumScanner):
                 exinfo_lag = self._get_exchange_info()
                 if exinfo_lag:
                     for score, pair, info, beta_val, corr in lag_cands:
-                        if n_pos >= MAX_POSITIONS:
+                        if n_new >= MAX_POSITIONS:
                             break
                         sz = self._calc_size(pair, info, boost=regime_boost)
                         sz = sz * LAG_SIZE_MULT  # Slightly smaller for lag trades
@@ -552,7 +558,7 @@ class AccumulationScanner(MomentumScanner):
                                     'entry_corr': corr,
                                 }
                                 self._save()
-                            n_pos += 1
+                            n_new += 1
 
                             log.info("[BtcLag] BOUGHT %s: %s@$%.4f=$%.0f beta=%.2f" % (
                                 pair, fqty, fp, fqty*fp, beta_val))
@@ -573,16 +579,17 @@ class AccumulationScanner(MomentumScanner):
                         except Exception as e:
                             log.error("[BtcLag] %s: BUY error: %s" % (pair, e))
 
-        # Recheck position count after lag trades
-        n_pos = len(self.state.get('alt_positions', {}))
-        if n_pos >= MAX_POSITIONS:
+        # Recheck new position count after lag trades
+        all_pos = self.state.get('alt_positions', {})
+        n_new = sum(1 for p in all_pos.values() if p.get('entry_type') in ('accumulation', 'btc_lag'))
+        if n_new >= MAX_POSITIONS:
             return
 
         # ── Strategy 2: Accumulation Detection ──
         # Score all coins
         cands = []
         for pair, info in all_data.items():
-            if pair in EXCLUDED or pair in self.state.get('alt_positions', {}):
+            if pair in EXCLUDED or pair in all_pos:
                 continue
             cd = self.state.get('alt_cooldowns', {}).get(pair, 0)
             if now - cd < 1800:
@@ -595,7 +602,7 @@ class AccumulationScanner(MomentumScanner):
             return
 
         cands.sort(key=lambda x: -x[0])
-        slots = MAX_POSITIONS - n_pos
+        slots = MAX_POSITIONS - n_new
         exinfo = self._get_exchange_info()
         if not exinfo:
             return
