@@ -14,22 +14,21 @@ log = logging.getLogger("TradingBot")
 EXCLUDED_COINS = {'BONK/USD', 'DOGE/USD'}  # AmountPrecision=0 means whole units only
 
 # Scanner config
-MIN_MOMENTUM = 0.01      # 1% minimum 24h change to consider
-MAX_ALT_POSITIONS = 14   # Allow up to 14 positions (was 8, blocking new entries)
-MAX_ALT_EXPOSURE = 0.55  # Max 55% of portfolio (~$550k) — deploy more capital
+MIN_MOMENTUM = 0.03      # 3% minimum — only strong movers (was 1%, bought everything)
+MAX_ALT_POSITIONS = 6    # 6 concentrated positions (was 14, too scattered)
+MAX_ALT_EXPOSURE = 0.50  # 50% of portfolio ($500k)
 ALT_TRAIL_MIN = 0.02     # Minimum trailing stop: 2%
 ALT_TRAIL_MAX = 0.07     # Maximum trailing stop: 7%
-SCAN_INTERVAL = 30       # Scan every 30 seconds (catch momentum fast)
+SCAN_INTERVAL = 60       # Scan every 60 seconds (was 30, too aggressive)
 MIN_PRICE = 0.005        # Minimum coin price to trade
 COIN_COOLDOWN = 1800     # 30 min cooldown per coin after selling (seconds)
 MOMENTUM_REVERSAL = -0.02  # -2% 24h change = real reversal (was -0.5%)
 
-# Hybrid position sizing — stronger momentum = bigger position (doubled for 2% target)
+# Hybrid position sizing — concentrated on strong movers
 MOMENTUM_TIERS = [
-    (0.10, 240000),  # +10%+ → $240k (very high conviction)
-    (0.06, 160000),  # +6-10% → $160k (high conviction)
-    (0.03, 100000),  # +3-6% → $100k (medium conviction)
-    (0.01, 40000),   # +1-3% → $40k (low conviction)
+    (0.10, 150000),  # +10%+ → $150k (very high conviction)
+    (0.06, 100000),  # +6-10% → $100k (high conviction)
+    (0.03, 60000),   # +3-6% → $60k (medium conviction — minimum entry)
 ]
 
 
