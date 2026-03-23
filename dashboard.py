@@ -84,25 +84,36 @@ def build_html():
         btc_held = 0
         all_ticker_data = {}
 
-    # Fetch order history from API
+    # Fetch order history from API — ALL coins, not just BTC
+    filled_orders = []
     try:
-        orders_resp = client.query_orders(pair='BTC/USD')
-        order_list = orders_resp.get('OrderMatched', []) if isinstance(orders_resp, dict) else []
-        filled_orders = [o for o in order_list if (o.get('Status') or '').upper() == 'FILLED']
-        # Sort by OrderID (ascending) to get chronological order
+        for query_pair in ['BTC/USD', 'TUT/USD', 'OPEN/USD', 'WLFI/USD', 'WIF/USD',
+                          'TRX/USD', 'FORM/USD', 'TON/USD', 'ETH/USD', 'SOL/USD']:
+            try:
+                resp = client.query_orders(pair=query_pair)
+                order_list = resp.get('OrderMatched', []) if isinstance(resp, dict) else []
+                for o in order_list:
+                    if (o.get('Status') or '').upper() == 'FILLED':
+                        o['_pair'] = query_pair
+                        filled_orders.append(o)
+            except Exception:
+                pass
         filled_orders.sort(key=lambda x: int(x.get('OrderID', 0)))
     except Exception:
         filled_orders = []
 
-    # Build trade history from filled orders (pair BUY→SELL)
+    # Build trade history from filled orders (pair BUY→SELL) per coin
     trade_history = []
-    buys_stack = []
+    buys_stacks = {}  # separate stack per coin
     for o in filled_orders:
+        pair = o.get('_pair', 'BTC/USD')
         side = (o.get('Side') or '').upper()
+        if pair not in buys_stacks:
+            buys_stacks[pair] = []
         if side == 'BUY':
-            buys_stack.append(o)
-        elif side == 'SELL' and buys_stack:
-            buy_o = buys_stack.pop(0)
+            buys_stacks[pair].append(o)
+        elif side == 'SELL' and buys_stacks.get(pair):
+            buy_o = buys_stacks[pair].pop(0)
             entry_p = float(buy_o.get('FilledAverPrice', 0))
             exit_p = float(o.get('FilledAverPrice', 0))
             qty = float(buy_o.get('FilledQuantity', 0))
@@ -111,6 +122,7 @@ def build_html():
             pnl = (exit_p - entry_p) * qty - fee_entry - fee_exit
             pnl_pct = pnl / (entry_p * qty) if entry_p > 0 else 0
             trade_history.append({
+                'pair': pair,
                 'entry_price': entry_p,
                 'exit_price': exit_p,
                 'pnl': pnl,
