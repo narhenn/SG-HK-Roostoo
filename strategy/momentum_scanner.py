@@ -15,13 +15,58 @@ EXCLUDED_COINS = {'BONK/USD', 'DOGE/USD'}  # AmountPrecision=0 means whole units
 # Scanner config
 MIN_MOMENTUM = 0.01      # 1% minimum 24h change to consider
 MAX_ALT_POSITIONS = 4    # Maximum simultaneous alt positions
-ALT_POSITION_SIZE = 15000  # $15k per alt position
+MAX_ALT_EXPOSURE = 0.20  # Max 20% of portfolio in alts total
 ALT_TRAIL_MIN = 0.02     # Minimum trailing stop: 2%
 ALT_TRAIL_MAX = 0.07     # Maximum trailing stop: 7%
 SCAN_INTERVAL = 300      # Scan every 5 minutes (seconds)
 MIN_PRICE = 0.005        # Minimum coin price to trade
 COIN_COOLDOWN = 1800     # 30 min cooldown per coin after selling (seconds)
 MOMENTUM_REVERSAL = -0.02  # -2% 24h change = real reversal (was -0.5%)
+
+# Hybrid position sizing — stronger momentum = bigger position
+MOMENTUM_TIERS = [
+    (0.10, 60000),   # +10%+ → $60k (very high conviction)
+    (0.06, 40000),   # +6-10% → $40k (high conviction)
+    (0.03, 25000),   # +3-6% → $25k (medium conviction)
+    (0.01, 10000),   # +1-3% → $10k (low conviction)
+]
+
+
+def _hybrid_size(change_24h: float, alt_trade_history: list) -> float:
+    """Calculate position size based on momentum strength + anti-martingale."""
+    # Base size from momentum tier
+    base = 10000  # default
+    for threshold, size in MOMENTUM_TIERS:
+        if abs(change_24h) >= threshold:
+            base = size
+            break
+
+    # Anti-martingale: adjust based on recent alt win/loss streak
+    if alt_trade_history:
+        consec_losses = 0
+        consec_wins = 0
+        for t in reversed(alt_trade_history[-10:]):
+            if t.get('pnl', 0) < 0:
+                if consec_wins > 0:
+                    break
+                consec_losses += 1
+            elif t.get('pnl', 0) > 0:
+                if consec_losses > 0:
+                    break
+                consec_wins += 1
+            else:
+                break
+
+        if consec_losses >= 3:
+            base *= 0.3
+        elif consec_losses == 2:
+            base *= 0.5
+        elif consec_losses == 1:
+            base *= 0.7
+        elif consec_wins >= 2:
+            base *= 1.3
+
+    return base
 
 
 def _adaptive_trail(change_24h: float) -> float:
@@ -106,15 +151,35 @@ class MomentumScanner:
             'amount_precision': pair_info.get('AmountPrecision', 2),
         }
 
+    def _current_alt_exposure(self):
+        """Total USD value of all alt positions."""
+        total = 0
+        for pair, pos in self.state.get('alt_positions', {}).items():
+            total += pos.get('entry_price', 0) * pos.get('qty', 0)
+        return total
+
     def _open_alt_position(self, coin, exchange_info):
-        """Open a position in an alt coin."""
+        """Open a position in an alt coin with hybrid sizing."""
         pair = coin['pair']
         price = coin['price']
         ask = coin['ask']
 
+        # Hybrid size based on momentum + anti-martingale
+        position_size = _hybrid_size(coin['change'], self.state.get('alt_trade_history', []))
+
+        # Cap by max exposure (20% of portfolio)
+        current_exposure = self._current_alt_exposure()
+        portfolio = self.state.get('current_equity', 1000000)
+        max_remaining = (MAX_ALT_EXPOSURE * portfolio) - current_exposure
+        if max_remaining <= 0:
+            log.info(f"[AltScanner] Alt exposure cap reached (${current_exposure:,.0f}/{MAX_ALT_EXPOSURE*portfolio:,.0f})")
+            return False
+        position_size = min(position_size, max_remaining)
+
         prec = self._get_precision(pair, exchange_info)
-        qty = round(ALT_POSITION_SIZE / ask, prec['amount_precision'])
+        qty = round(position_size / ask, prec['amount_precision'])
         limit_price = round(ask, prec['price_precision'])
+        log.info(f"[AltScanner] {pair}: hybrid size=${position_size:,.0f} (momentum={coin['change']*100:+.1f}%)")
 
         if qty <= 0:
             log.warning(f"[AltScanner] {pair}: qty rounds to 0, skipping")
