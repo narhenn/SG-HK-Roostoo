@@ -202,41 +202,59 @@ def build_html():
         'UNKNOWN': '#9E9E9E',
     }
 
-    # Position info
-    if positions:
-        pos = positions[0]
-        entry_price = pos.get('entry_price', 0)
-        quantity = pos.get('quantity', 0)
-        entry_time = pos.get('entry_time', '')
-        unrealized_pnl = (price - entry_price) * quantity if price > 0 else 0
-        unrealized_pct = ((price - entry_price) / entry_price * 100) if entry_price > 0 else 0
-        pnl_color = "#4CAF50" if unrealized_pnl >= 0 else "#F44336"
+    # Position info — show ALL coins held in wallet
+    all_ticker = {}
+    try:
+        all_ticker_raw = client.get_ticker()
+        all_ticker = all_ticker_raw.get('Data', {})
+    except Exception:
+        pass
+
+    wallet_positions = []
+    for coin_name in ['BTC', 'ETH', 'SOL', 'TUT', 'OPEN', 'TRX', 'WLFI', 'FORM', 'TON', 'BNB']:
+        coin_bal = wallet.get(coin_name, {}) if isinstance(wallet, dict) else {}
+        coin_free = float(coin_bal.get('Free', 0))
+        if coin_free > 0.00001:
+            pair = f"{coin_name}/USD"
+            t_info = all_ticker.get(pair, {})
+            coin_price = float(t_info.get('LastPrice', 0))
+            coin_change = float(t_info.get('Change', 0))
+            coin_value = coin_free * coin_price
+            if coin_value > 1:  # Only show positions worth > $1
+                wallet_positions.append({
+                    'coin': coin_name,
+                    'pair': pair,
+                    'qty': coin_free,
+                    'price': coin_price,
+                    'value': coin_value,
+                    'change': coin_change,
+                })
+
+    if wallet_positions:
+        pos_rows = ""
+        total_pos_value = 0
+        for wp in wallet_positions:
+            pnl_color = "#4CAF50" if wp['change'] >= 0 else "#F44336"
+            total_pos_value += wp['value']
+            pos_rows += f"""
+            <div class="stat-row">
+                <span><b>{wp['coin']}</b></span>
+                <span>${wp['value']:,.0f} <span style="color:{pnl_color}">({wp['change']*100:+.1f}%)</span></span>
+            </div>"""
         position_html = f"""
         <div class="card">
-            <h3>Open Position</h3>
-            <div class="stat-row">
-                <span>Entry Price</span>
-                <span>${entry_price:,.2f}</span>
+            <h3>Open Positions ({len(wallet_positions)})</h3>
+            {pos_rows}
+            <div class="stat-row" style="border-top: 2px solid #444; margin-top: 8px; padding-top: 8px">
+                <span><b>Total Exposure</b></span>
+                <span><b>${total_pos_value:,.0f}</b></span>
             </div>
-            <div class="stat-row">
-                <span>Quantity</span>
-                <span>{quantity:.5f} BTC</span>
-            </div>
-            <div class="stat-row">
-                <span>Entry Time</span>
-                <span>{entry_time[:19] if entry_time else 'N/A'}</span>
-            </div>
-            <div class="stat-row">
-                <span>Unrealized P&L</span>
-                <span style="color: {pnl_color}; font-weight: bold">${unrealized_pnl:+,.2f} ({unrealized_pct:+.2f}%)</span>
-            </div>
-        </div>
-        """
+        </div>"""
     else:
         position_html = """
         <div class="card">
-            <h3>Open Position</h3>
-            <p style="color: #9E9E9E; text-align: center; padding: 20px;">No open position -waiting for signal</p>
+            <h3>Open Positions</h3>
+            <p style="color: #9E9E9E; text-align: center; padding: 20px;">No open positions - waiting for signal</p>
         </div>
         """
 
