@@ -364,20 +364,23 @@ class MomentumScanner:
                 if cp > 0 and cp < pos.get('entry_price', 0):
                     underwater += 1
             if underwater / len(positions) >= 0.5:
-                log.warning(f"[AltScanner] CORRELATED CRASH: {underwater}/{len(positions)} underwater. Tightening stops!")
+                if not self.state.get('_crash_alert_sent'):
+                    log.warning(f"[AltScanner] CORRELATED CRASH: {underwater}/{len(positions)} underwater. Tightening stops!")
+                    self.state['_crash_alert_sent'] = True
+                    try:
+                        from execution.alerts import send_alert
+                        send_alert(f"<b>CORRELATED CRASH</b>\n{underwater}/{len(positions)} underwater\nAll stops tightened to 1%")
+                    except Exception:
+                        pass
                 for pair, pos in positions.items():
                     cp = float(all_ticker.get(pair, {}).get('LastPrice', 0))
                     if cp > 0:
-                        emergency_stop = cp * 0.99  # 1% below current
+                        emergency_stop = cp * 0.99
                         if emergency_stop > pos.get('stop', 0):
                             pos['stop'] = emergency_stop
-                            log.info(f"[AltScanner] {pair}: EMERGENCY stop → ${emergency_stop:.4f}")
-                try:
-                    from execution.alerts import send_alert
-                    send_alert(f"<b>CORRELATED CRASH</b>\n{underwater}/{len(positions)} underwater\nAll stops tightened to 1%")
-                except Exception:
-                    pass
                 self._save()
+            else:
+                self.state['_crash_alert_sent'] = False
 
         for pair, pos in list(positions.items()):  # list() for safe iteration
             if pos.get('sell_failed'):
