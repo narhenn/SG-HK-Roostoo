@@ -54,23 +54,35 @@ def build_html():
         client = RoostooClient()
         balance = client.get_balance()
         wallet = balance.get('SpotWallet', balance.get('Data', {}))
+        # Fetch ALL tickers once for portfolio valuation
+        try:
+            all_ticker_raw = client.get_ticker()
+            all_ticker_data = all_ticker_raw.get('Data', {})
+        except Exception:
+            all_ticker_data = {}
+
         if isinstance(wallet, dict) and 'USD' in wallet:
             usd_free = float(wallet['USD'].get('Free', 0))
-            # Check if we hold BTC (open position)
-            btc_held = float(wallet.get('BTC', {}).get('Free', 0)) if 'BTC' in wallet else 0
-            # Total equity = USD + BTC value at current price
-            try:
-                raw_t = client.get_ticker(TRADING_PAIR)
-                btc_price = float(raw_t['Data'][TRADING_PAIR]['LastPrice']) if 'Data' in raw_t else 0
-            except Exception:
-                btc_price = 0
-            current_equity = usd_free + btc_held * btc_price
+            # Total equity = USD + ALL coin holdings at market price
+            current_equity = usd_free
+            btc_held = 0
+            for coin_name, coin_info in wallet.items():
+                if coin_name == 'USD':
+                    continue
+                coin_bal = float(coin_info.get('Free', 0))
+                if coin_bal > 0.00001:
+                    pair = f"{coin_name}/USD"
+                    coin_price = float(all_ticker_data.get(pair, {}).get('LastPrice', 0))
+                    current_equity += coin_bal * coin_price
+                    if coin_name == 'BTC':
+                        btc_held = coin_bal
         else:
             current_equity = state.get('current_equity', STARTING_CAPITAL)
             btc_held = 0
     except Exception:
         current_equity = state.get('current_equity', STARTING_CAPITAL)
         btc_held = 0
+        all_ticker_data = {}
 
     # Fetch order history from API
     try:
