@@ -97,7 +97,53 @@ def try_binance_prefill():
                 f.write(json.dumps({'pair': pair, 't': list(tk)}) + '\n')
 
     total = sum(len(t) for t in all_ticks.values())
-    print("Binance prefill complete: %d pairs, %d total ticks" % (len(all_ticks), total))
+    print("1-min candles done: %d pairs, %d total ticks" % (len(all_ticks), total))
+
+    # Also fetch 5-min and 1-hour for higher-timeframe trend context
+    # Store in separate files the scanner can read
+    for tf_label, tf_interval, tf_limit, tf_file in [
+        ('5-min', '5m', 300, 'data/price_buffer_5m.jsonl'),
+        ('1-hour', '1h', 300, 'data/price_buffer_1h.jsonl'),
+    ]:
+        print("\nFetching %s candles..." % tf_label)
+        tf_ticks = {}
+        tf_count = 0
+        for roostoo_pair, binance_sym in BINANCE_MAP.items():
+            if roostoo_pair in EXCLUDED:
+                continue
+            try:
+                resp = requests.get('https://api.binance.com/api/v3/klines',
+                    params={'symbol': binance_sym, 'interval': tf_interval, 'limit': tf_limit}, timeout=10)
+                if resp.status_code != 200:
+                    continue
+                klines = resp.json()
+                if not isinstance(klines, list) or len(klines) < 10:
+                    continue
+                ticks = []
+                for k in klines:
+                    ts = k[0] / 1000
+                    close = float(k[4])
+                    high = float(k[2])
+                    low = float(k[3])
+                    vol = float(k[5])
+                    bid = close - (high - low) * 0.01
+                    ask = close + (high - low) * 0.01
+                    spread = (ask - bid) / close if close > 0 else 0
+                    ticks.append((ts, close, bid, ask, vol, spread))
+                tf_ticks[roostoo_pair] = ticks
+                tf_count += 1
+                time.sleep(0.1)
+            except Exception:
+                continue
+
+        if tf_count > 0:
+            with open(tf_file, 'w') as f:
+                for pair, ticks in tf_ticks.items():
+                    for tk in ticks:
+                        f.write(json.dumps({'pair': pair, 't': list(tk)}) + '\n')
+            print("  %s: %d pairs saved to %s" % (tf_label, tf_count, tf_file))
+
+    print("\nBinance prefill complete: 1m + 5m + 1h candles")
     return True
 
 
