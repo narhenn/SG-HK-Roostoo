@@ -156,33 +156,37 @@ if __name__ == "__main__":
     print(f"Result: {result}")
     assert result["decision"] == "PASS", "Test 1 should PASS"
     
-    # TEST 2 — Extreme price move (should BLOCK on check 1)
-    print("\nTest 2: Extreme price move")
+    # TEST 2 — Extreme price move (advisory only, should PASS — no longer blocks)
+    print("\nTest 2: Extreme price move (advisory only)")
     prices = [79000, 79200, 80500, 81000, 81500]  # 2.5%+ move in 3 candles
     volumes = [100, 105, 98, 102, 101]  # Normal volume
     spread = 0.0001  # Normal spread
     result = check_reversal_block(prices, volumes, spread, "BUY")
     print(f"Result: {result}")
-    assert result["decision"] == "BLOCK", "Test 2 should BLOCK"
-    assert result["check1_extreme_move"] == True, "Test 2 should trigger check1"
-    
-    # TEST 3 — Cooldown active (should BLOCK immediately without running checks)
-    print("\nTest 3: Cooldown active")
-    result = check_reversal_block(prices, volumes, spread, "BUY")  # Same params as Test 2
+    assert result["decision"] == "PASS", "Test 2 should PASS (extreme move is advisory only)"
+
+    # TEST 3 — Cooldown active after spread block (need to trigger spread first)
+    print("\nTest 3: Cooldown after spread block")
+    # Trigger a spread block first to set cooldown
+    reset_cooldown()
+    for _ in range(10):
+        spread_history.append(0.0001)  # Build up normal spread history
+    result_spread = check_reversal_block(prices, volumes, 0.001, "BUY")  # 10x spread = block
+    print(f"Spread block result: {result_spread}")
+    result = check_reversal_block(prices, volumes, 0.0001, "BUY")  # Now in cooldown
     print(f"Result: {result}")
     assert result["decision"] == "BLOCK", "Test 3 should BLOCK due to cooldown"
     print(f"Cooldown remaining: {result['cooldown_remaining']} seconds")
     
-    # TEST 4 — Reset and test abnormal volume (should BLOCK on check 3)
-    print("\nTest 4: Abnormal volume after reset")
+    # TEST 4 — Reset and test abnormal volume (advisory only, should PASS)
+    print("\nTest 4: Abnormal volume after reset (advisory only)")
     reset_cooldown()
     prices = [79800, 79850, 79900, 79950, 80000]  # Normal prices
     volumes = [100, 105, 98, 102, 850]  # Last volume is 8x average — extreme spike
     spread = 0.0001
     result = check_reversal_block(prices, volumes, spread, "BUY")
     print(f"Result: {result}")
-    assert result["decision"] == "BLOCK", "Test 4 should BLOCK"
-    assert result["check3_volume"] == True, "Test 4 should trigger check3"
+    assert result["decision"] == "PASS", "Test 4 should PASS (volume spike is advisory only)"
     
     # TEST 5 — SELL signal while in PASS state (should also work)
     print("\nTest 5: SELL signal in normal conditions")

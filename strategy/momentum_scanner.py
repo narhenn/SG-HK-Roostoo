@@ -15,7 +15,7 @@ EXCLUDED_COINS = {'BONK/USD', 'DOGE/USD'}  # AmountPrecision=0 means whole units
 # Scanner config
 MIN_MOMENTUM = 0.01      # 1% minimum 24h change to consider
 MAX_ALT_POSITIONS = 4    # Maximum simultaneous alt positions
-MAX_ALT_EXPOSURE = 0.20  # Max 20% of portfolio in alts total
+MAX_ALT_EXPOSURE = 0.10  # Max 10% of portfolio in alts total
 ALT_TRAIL_MIN = 0.02     # Minimum trailing stop: 2%
 ALT_TRAIL_MAX = 0.07     # Maximum trailing stop: 7%
 SCAN_INTERVAL = 300      # Scan every 5 minutes (seconds)
@@ -218,6 +218,7 @@ class MomentumScanner:
                     'stop': fill_price * (1 - trail_pct),
                     'entry_time': datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S'),
                     'order_id': order_id,
+                    'entry_change': coin['change'],
                     'price_precision': prec['price_precision'],
                     'amount_precision': prec['amount_precision'],
                 }
@@ -282,7 +283,7 @@ class MomentumScanner:
                 # Update peak and adaptive trail
                 if price > peak:
                     pos['peak_price'] = price
-                    new_trail = _adaptive_trail(change)
+                    new_trail = _adaptive_trail(pos.get('entry_change', change))
                     pos['trail_pct'] = new_trail
                     pos['stop'] = price * (1 - new_trail)
                     log.info(f"[AltScanner] {pair}: new peak ${price:.4f}, trail={new_trail:.1%}, stop ${pos['stop']:.4f}")
@@ -297,7 +298,7 @@ class MomentumScanner:
                         self._close_partial(pair, bid, gunner_qty, 'GUNNER_TP')
                         pos['qty'] = round(pos['qty'] - gunner_qty, pos.get('amount_precision', 2))
                         pos['gunner_fired'] = True
-                        pos['stop'] = entry * 1.001  # Breakeven INCLUDING entry fee
+                        pos['stop'] = entry * 1.002  # Breakeven INCLUDING entry fee
                         pos['tp_price'] = 0
                         log.info(f"[AltScanner] {pair}: RUNNER active. qty={pos['qty']} stop=breakeven+fee ${entry*1.001:.4f}")
                         try:
@@ -378,6 +379,11 @@ class MomentumScanner:
                 'reason': reason,
                 'exit_time': datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S'),
             })
+
+            # Feed gunner P&L back to equity
+            equity = self.state.get('current_equity', 1000000)
+            self.state['current_equity'] = equity + net_pnl
+
             self._save()
 
         except Exception as e:
@@ -402,16 +408,30 @@ class MomentumScanner:
             status = (detail.get("Status") or "").upper()
 
             if not order_id:
-                log.error(f"[AltScanner] {pair}: SELL returned no OrderID. Response: {order}")
-                # Don't retry infinitely -- mark for manual review
-                pos['sell_failed'] = True
-                self._save()
+                log.error(f"[AltScanner] {pair}: SELL returned no OrderID. Retrying at lower price...")
+                # Retry at slightly lower price
                 try:
-                    from execution.alerts import send_alert
-                    send_alert(f"<b>ALT SELL FAILED {pair}</b>\nReason: {reason}\nManual review needed.")
-                except Exception:
-                    pass
-                return
+                    retry_price = round(current_bid * 0.999, price_prec)
+                    order2 = self.client.place_order(pair, "SELL", "LIMIT", qty, retry_price)
+                    detail2 = order2.get("OrderDetail", order2)
+                    order_id = detail2.get("OrderID") or order2.get("OrderID")
+                    if order_id:
+                        avg_price = float(detail2.get("FilledAverPrice", 0) or 0)
+                        log.info(f"[AltScanner] {pair}: Retry sell succeeded. id={order_id}")
+                    else:
+                        pos['sell_failed'] = True
+                        self._save()
+                        try:
+                            from execution.alerts import send_alert
+                            send_alert(f"<b>ALT SELL FAILED {pair}</b>\nReason: {reason}\nManual review needed.")
+                        except Exception:
+                            pass
+                        return
+                except Exception as e2:
+                    log.error(f"[AltScanner] {pair}: Retry sell also failed: {e2}")
+                    pos['sell_failed'] = True
+                    self._save()
+                    return
 
             exit_price = avg_price or limit_price
             entry_price = pos['entry_price']
@@ -436,6 +456,10 @@ class MomentumScanner:
                 'reason': reason,
                 'exit_time': datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S'),
             })
+
+            # Feed alt P&L back to equity tracking
+            equity = self.state.get('current_equity', 1000000)
+            self.state['current_equity'] = equity + net_pnl
 
             # Remove position and set cooldown
             del self.state['alt_positions'][pair]

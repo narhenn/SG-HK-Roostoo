@@ -131,8 +131,11 @@ LOG_LEVEL = "INFO"
 
 
 # ── Multi-coin Hybrid (disabled until BTC bot confirmed working) ──
-TELEGRAM_TOKEN = "8742026308:AAHDWHuAX8W4YJKAg13Wq48eCAKYXVRfcnk"
-TELEGRAM_CHAT_ID = "-5271669161"
+try:
+    from config_secrets import TELEGRAM_TOKEN, TELEGRAM_CHAT_ID
+except ImportError:
+    TELEGRAM_TOKEN = ""
+    TELEGRAM_CHAT_ID = ""
 
 ENABLE_MULTICOIN = False        # Flip to True after BTC bot verified
 ALT_CAPITAL_PCT = 0.30          # 30% of capital for alts

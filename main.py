@@ -257,6 +257,11 @@ class TradingBot:
             log.info(f"Cycle {cycle}: {days_left:.1f} days left — no new positions")
             return
 
+        # BTC strategy paused — alt scanner handles trading
+        if not self.has_position():
+            log.info(f"Cycle {cycle}: BTC strategy paused. Alt scanner active. Price=${price:.2f}")
+            return
+
         # ── Check halts ──
         if self.is_halted():
             log.info(f"Cycle {cycle}: Bot is HALTED. Price=${price:.2f}. Collecting data only.")
@@ -513,37 +518,6 @@ class TradingBot:
         if source == 'urgency_bounce':
             size_usd *= 0.5
             log.info(f"Cycle {cycle}: URGENCY PROBE — size halved to ${size_usd:.0f}")
-
-        # Anti-Martingale: shrink after losses, grow after wins
-        trade_hist = self.state.get('trade_history', [])
-        if trade_hist:
-            # Count consecutive losses/wins from end of history
-            consec_losses = 0
-            consec_wins = 0
-            for t in reversed(trade_hist):
-                if t.get('pnl', 0) < 0:
-                    if consec_wins > 0:
-                        break
-                    consec_losses += 1
-                elif t.get('pnl', 0) > 0:
-                    if consec_losses > 0:
-                        break
-                    consec_wins += 1
-                else:
-                    break
-
-            if consec_losses >= 3:
-                size_usd *= 0.3
-                log.info(f"Cycle {cycle}: ANTI-MARTINGALE — {consec_losses} consecutive losses, size x0.3 = ${size_usd:.0f}")
-            elif consec_losses == 2:
-                size_usd *= 0.5
-                log.info(f"Cycle {cycle}: ANTI-MARTINGALE — 2 consecutive losses, size x0.5 = ${size_usd:.0f}")
-            elif consec_losses == 1:
-                size_usd *= 0.7
-                log.info(f"Cycle {cycle}: ANTI-MARTINGALE — 1 loss, size x0.7 = ${size_usd:.0f}")
-            elif consec_wins >= 2:
-                size_usd *= 1.3
-                log.info(f"Cycle {cycle}: ANTI-MARTINGALE — {consec_wins} consecutive wins, size x1.3 = ${size_usd:.0f}")
 
         log.info(
             f"Cycle {cycle}: L6 {'PASS' if size_usd > 0 else 'BLOCKED'} | "
