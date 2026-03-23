@@ -178,7 +178,7 @@ class MomentumScanner:
         # Hybrid size based on momentum + anti-martingale
         position_size = _hybrid_size(coin['change'], self.state.get('alt_trade_history', []))
 
-        # Cap by max exposure (20% of portfolio)
+        # Cap by max exposure (10% of portfolio)
         current_exposure = self._current_alt_exposure()
         portfolio = self.state.get('current_equity', 1000000)
         max_remaining = (MAX_ALT_EXPOSURE * portfolio) - current_exposure
