@@ -36,6 +36,14 @@ BTC_RSI_1M_GATE = 80
 MIN_VOLUME_USD = 3_000_000
 ENTRY_SCORE_MIN = 65
 
+# Funding rate thresholds
+FUNDING_EXTREME_LONG = 0.0005   # >0.05% per 8h = overleveraged longs, DON'T BUY
+FUNDING_EXTREME_SHORT = -0.0003 # <-0.03% = overleveraged shorts, buy the bounce
+# Cascade detection
+CASCADE_DROP_PCT = -0.02        # BTC dropped >2% in 60 ticks = cascade happening
+CASCADE_FADE_DROP = -0.03       # BTC dropped >3% = cascade fade opportunity
+CASCADE_FADE_LOOKBACK = 60      # Check over last 60 ticks
+
 # BTC Beta Lag parameters
 BTC_MOVE_THRESHOLD = 0.003  # BTC must move +0.3% in 3 ticks
 BTC_MOVE_LOOKBACK = 3       # Check last 3 ticks
@@ -310,22 +318,64 @@ class AccumulationScanner(MomentumScanner):
         return s, r
 
     def _btc_gate(self):
-        """Check if BTC allows alt entries."""
+        """Check if BTC allows alt entries. Returns (allowed, boost_factor).
+        boost_factor > 1.0 means high-conviction regime (e.g., cascade fade)."""
+        boost = 1.0
+
+        # Gate 1: BTC 1-min RSI overbought
         br = self.buffer.rsi('BTC/USD', RSI_PERIOD)
         if br > BTC_RSI_1M_GATE:
-            log.info("[AccumScan] BTC RSI %.0f > %d — blocked" % (br, BTC_RSI_1M_GATE))
-            return False
+            log.info("[Gate] BTC RSI %.0f > %d — blocked" % (br, BTC_RSI_1M_GATE))
+            return False, 0
+
+        # Gate 2: Market breadth
         try:
             tk = self.client.get_ticker()
             d = tk.get('Data', {})
             total = len(d)
             green = sum(1 for v in d.values() if float(v.get('Change', 0)) > 0)
-            if total > 0 and green / total < 0.30:
-                log.info("[AccumScan] Breadth %.0f%% < 30%% — blocked" % (green/total*100))
-                return False
+            breadth = green / total if total > 0 else 0.5
+            if breadth < 0.30:
+                log.info("[Gate] Breadth %.0f%% < 30%% — blocked" % (breadth * 100))
+                return False, 0
+        except Exception:
+            breadth = 0.5
+
+        # Gate 3: Funding rate — extreme positive = DON'T BUY (longs crowded)
+        try:
+            from data.fetchers import fetch_funding_rate
+            funding = fetch_funding_rate()
+            self._last_funding = funding
+            if funding > FUNDING_EXTREME_LONG:
+                log.info("[Gate] Funding %.4f%% > %.4f%% — longs crowded, blocked" % (
+                    funding * 100, FUNDING_EXTREME_LONG * 100))
+                return False, 0
+            # Extreme negative funding = shorts crowded = bounce likely = BOOST
+            if funding < FUNDING_EXTREME_SHORT:
+                log.info("[Gate] Funding %.4f%% — shorts crowded, BOOSTING entries" % (funding * 100))
+                boost = 1.5
         except Exception:
             pass
-        return True
+
+        # Gate 4: Cascade detection — BTC dropped >2% in last 60 ticks = active cascade
+        if self.buffer.tick_count >= CASCADE_FADE_LOOKBACK:
+            btc_drop = self.buffer.roc('BTC/USD', CASCADE_FADE_LOOKBACK)
+            if btc_drop < CASCADE_DROP_PCT:
+                # Check if cascade is STILL happening (recent momentum negative)
+                btc_recent = self.buffer.roc('BTC/USD', 5)
+                if btc_recent < -0.001:
+                    log.info("[Gate] CASCADE ACTIVE: BTC down %.2f%% in %d ticks, still falling — blocked" % (
+                        btc_drop * 100, CASCADE_FADE_LOOKBACK))
+                    return False, 0
+                else:
+                    # Cascade happened but BTC stabilizing — potential fade opportunity
+                    funding = getattr(self, '_last_funding', 0)
+                    if btc_drop < CASCADE_FADE_DROP and funding < 0 and breadth > 0.30:
+                        log.info("[Gate] CASCADE FADE: BTC dropped %.2f%%, funding negative, breadth recovering — BOOST" % (
+                            btc_drop * 100))
+                        boost = 2.0  # Double conviction for cascade fades
+
+        return True, boost
 
     def _find_btc_lag_candidates(self, all_data):
         """Find alts that should follow BTC but haven't yet."""
@@ -380,7 +430,7 @@ class AccumulationScanner(MomentumScanner):
         candidates.sort(key=lambda x: -x[0])
         return candidates[:3]  # Top 3 laggards
 
-    def _calc_size(self, pair, info):
+    def _calc_size(self, pair, info, boost=1.0):
         eq = self.state.get('current_equity', 1000000)
         base = eq * POS_SIZE_BASE
         vr = self.buffer.vol_ratio(pair)
@@ -390,6 +440,8 @@ class AccumulationScanner(MomentumScanner):
             base *= 2.0
         else:
             base *= 1.5
+        # Apply regime boost (e.g., 1.5x for extreme short funding, 2x for cascade fade)
+        base *= boost
         max_total = eq * 0.20
         cur_exp = self._current_alt_exposure()
         remaining = max_total - cur_exp
@@ -429,7 +481,8 @@ class AccumulationScanner(MomentumScanner):
             except (ValueError, TypeError):
                 pass
 
-        if not self._btc_gate():
+        gate_ok, regime_boost = self._btc_gate()
+        if not gate_ok:
             return
 
         n_pos = len(self.state.get('alt_positions', {}))
@@ -445,7 +498,7 @@ class AccumulationScanner(MomentumScanner):
                     for score, pair, info, beta_val, corr in lag_cands:
                         if n_pos >= MAX_POSITIONS:
                             break
-                        sz = self._calc_size(pair, info)
+                        sz = self._calc_size(pair, info, boost=regime_boost)
                         sz = sz * LAG_SIZE_MULT  # Slightly smaller for lag trades
                         if sz < 1000:
                             continue
@@ -551,7 +604,7 @@ class AccumulationScanner(MomentumScanner):
         for sc, pair, info, reasons in cands:
             if opened >= slots:
                 break
-            sz = self._calc_size(pair, info)
+            sz = self._calc_size(pair, info, boost=regime_boost)
             if sz < 1000:
                 continue
 
