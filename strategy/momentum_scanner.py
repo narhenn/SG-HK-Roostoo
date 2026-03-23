@@ -10,6 +10,9 @@ from datetime import datetime, timedelta
 
 log = logging.getLogger("TradingBot")
 
+# Thread lock for alt_positions — prevents RuntimeError from concurrent dict mutation
+_alt_lock = threading.Lock()
+
 # Coins to exclude (too low price, precision issues)
 EXCLUDED_COINS = {'BONK/USD', 'DOGE/USD'}  # AmountPrecision=0 means whole units only
 
@@ -427,7 +430,14 @@ class MomentumScanner:
                     pos['peak_price'] = price
                     new_trail = _adaptive_trail(pos.get('entry_change', change))
                     pos['trail_pct'] = new_trail
-                    pos['stop'] = price * (1 - new_trail)
+                    new_stop = price * (1 - new_trail)
+                    # For runners (gunner already fired): stop must stay >= breakeven
+                    if pos.get('gunner_fired'):
+                        breakeven = entry * 1.003
+                        new_stop = max(new_stop, breakeven)
+                    # Stop only moves up, never down
+                    if new_stop > pos.get('stop', 0):
+                        pos['stop'] = new_stop
                     log.info(f"[AltScanner] {pair}: new peak ${price:.4f}, trail={new_trail:.1%}, stop ${pos['stop']:.4f}")
 
                 # Runner-Gunner take profit (fixed TP, no time decay — let recoveries run)
@@ -517,9 +527,16 @@ class MomentumScanner:
             detail = order.get("OrderDetail", order)
             order_id = detail.get("OrderID") or order.get("OrderID")
             avg_price = float(detail.get("FilledAverPrice", 0) or 0)
+            filled_qty = float(detail.get("FilledQuantity", 0) or 0)
+            status = str(detail.get("Status", "")).upper()
 
             if not order_id:
                 log.error(f"[AltScanner] {pair}: PARTIAL SELL failed. Response: {order}")
+                return False
+
+            # Verify the order actually filled (not just accepted)
+            if status not in ("FILLED", "COMPLETED", "") and filled_qty <= 0:
+                log.error(f"[AltScanner] {pair}: PARTIAL SELL not filled (status={status}). Aborting gunner.")
                 return False
 
             exit_price = avg_price or limit_price
@@ -572,15 +589,17 @@ class MomentumScanner:
             avg_price = float(detail.get("FilledAverPrice", 0) or 0)
             status = (detail.get("Status") or "").upper()
 
-            if not order_id:
-                log.error(f"[AltScanner] {pair}: SELL returned no OrderID. Retrying at lower price...")
+            if not order_id or (status not in ("FILLED", "COMPLETED", "") and filled_qty <= 0):
+                log.error(f"[AltScanner] {pair}: SELL not filled (id={order_id}, status={status}). Retrying at lower price...")
                 # Retry at slightly lower price
                 try:
                     retry_price = round(current_bid * 0.999, price_prec)
                     order2 = self.client.place_order(pair, "SELL", "LIMIT", qty, retry_price)
                     detail2 = order2.get("OrderDetail", order2)
                     order_id = detail2.get("OrderID") or order2.get("OrderID")
-                    if order_id:
+                    retry_status = str(detail2.get("Status", "")).upper()
+                    retry_filled = float(detail2.get("FilledQuantity", 0) or 0)
+                    if order_id and (retry_status in ("FILLED", "COMPLETED", "") or retry_filled > 0):
                         avg_price = float(detail2.get("FilledAverPrice", 0) or 0)
                         log.info(f"[AltScanner] {pair}: Retry sell succeeded. id={order_id}")
                     else:
@@ -646,6 +665,13 @@ class MomentumScanner:
 
         except Exception as e:
             log.error(f"[AltScanner] {pair}: SELL failed: {e}")
+            pos['sell_failed'] = True
+            self._save()
+            try:
+                from execution.alerts import send_alert
+                send_alert(f"<b>ALT SELL FAILED {pair}</b>\nError: {str(e)[:100]}\nMarked as zombie.")
+            except Exception:
+                pass
 
     def start_alt_monitor(self):
         """Start a background thread that checks alt exits every 1.5 seconds."""
@@ -654,7 +680,8 @@ class MomentumScanner:
             while True:
                 try:
                     if self.state.get('alt_positions'):
-                        self._check_alt_exits()
+                        with _alt_lock:
+                            self._check_alt_exits()
                 except Exception as e:
                     log.error(f"[AltMonitor] Error: {e}")
                 time.sleep(1.5)
@@ -785,6 +812,10 @@ class MomentumScanner:
         if self.state.get('_juinstreet_active'):
             return
 
+        # Competition end protection: no new entries in final days
+        if self.state.get('_competition_protect'):
+            return
+
         # SAFETY NET 1b: Check daily loss halt
         halt_until = self.state.get('halt_until')
         if halt_until:
@@ -829,16 +860,18 @@ class MomentumScanner:
             if opened >= slots:
                 break
             pair = coin['pair']
-            # Check sell_failed FIRST (before checking if held — zombie might be in alt_positions)
-            existing = self.state.get('alt_positions', {}).get(pair, {})
-            if existing and existing.get('sell_failed'):
-                # Don't count zombie toward slot limit — remove it
-                log.warning(f"[AltScanner] {pair}: removing zombie position (sell failed previously)")
-                del self.state['alt_positions'][pair]
-                self._save()
-                continue
-            if pair in self.state.get('alt_positions', {}):
-                continue
+            with _alt_lock:
+                # Check sell_failed FIRST (before checking if held — zombie might be in alt_positions)
+                existing = self.state.get('alt_positions', {}).get(pair, {})
+                if existing and existing.get('sell_failed'):
+                    # Don't count zombie toward slot limit — remove it and set cooldown
+                    log.warning(f"[AltScanner] {pair}: removing zombie position (sell failed previously)")
+                    del self.state['alt_positions'][pair]
+                    self.state.setdefault('alt_cooldowns', {})[pair] = time.time()
+                    self._save()
+                    continue
+                if pair in self.state.get('alt_positions', {}):
+                    continue
             # Skip coins in cooldown — require momentum RESET before re-entry
             cooldown_time = self.state.get('alt_cooldowns', {}).get(pair, 0)
             if time.time() - cooldown_time < COIN_COOLDOWN:

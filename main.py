@@ -249,12 +249,30 @@ class TradingBot:
         # ── Competition end-date protection ──
         competition_end = datetime(2026, 3, 31, 12, 0)  # 8pm SGT = 12pm UTC
         days_left = (competition_end - datetime.utcnow()).total_seconds() / 86400
-        if days_left <= 1 and self.has_position():
-            log.info(f"Cycle {cycle}: FINAL DAY — closing position to lock score")
-            self.executor.execute_sell(bid, reason="COMPETITION_END")
+        if days_left <= 1:
+            # FINAL DAY: close ALL positions (BTC + alts)
+            if self.has_position():
+                log.info(f"Cycle {cycle}: FINAL DAY — closing BTC position to lock score")
+                self.executor.execute_sell(bid, reason="COMPETITION_END")
+            # Close all alt positions
+            alt_positions = self.state.get('alt_positions', {})
+            if alt_positions:
+                log.info(f"Cycle {cycle}: FINAL DAY — closing {len(alt_positions)} alt positions")
+                try:
+                    all_tickers = self.client.get_ticker().get('Data', {})
+                    for pair, pos in list(alt_positions.items()):
+                        alt_bid = float(all_tickers.get(pair, {}).get('MaxBid', 0))
+                        if alt_bid > 0:
+                            self.alt_scanner._close_alt_position(pair, alt_bid, 'COMPETITION_END', 0)
+                            time.sleep(2)
+                except Exception as e:
+                    log.error(f"Failed to close alt positions: {e}")
             return
-        if days_left <= PROTECT_DAYS_BEFORE_END and not self.has_position():
-            log.info(f"Cycle {cycle}: {days_left:.1f} days left — no new positions")
+        if days_left <= PROTECT_DAYS_BEFORE_END:
+            if not self.has_position():
+                log.info(f"Cycle {cycle}: {days_left:.1f} days left — no new BTC positions")
+            # Block new alt entries too during protection window
+            self.state['_competition_protect'] = True
             return
 
         # BTC strategy paused — alt scanner handles trading
@@ -651,7 +669,9 @@ class TradingBot:
                     log.error(f"Alt scanner error: {e}")
                 self.send_heartbeat()
                 self.send_daily_summary()
-                save_state(self.state)
+                from strategy.momentum_scanner import _alt_lock
+                with _alt_lock:
+                    save_state(self.state)
                 time.sleep(TRADE_INTERVAL_SECONDS)
 
             except KeyboardInterrupt:
