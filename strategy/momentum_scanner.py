@@ -204,7 +204,7 @@ class MomentumScanner:
                 # Adaptive trailing stop based on coin's volatility
                 trail_pct = _adaptive_trail(coin['change'])
                 # Gunner TP at 1/3 of entry momentum (quick profit, runner rides the rest)
-                tp_pct = max(abs(coin['change']) * 0.33, 0.01)  # min 1% TP
+                tp_pct = max(abs(coin['change']) * 0.33, 0.015)  # min 1.5% TP (covers fees + spread)
                 tp_price = fill_price * (1 + tp_pct)
 
                 # Record position
