@@ -71,13 +71,13 @@ def main():
 
     results = []
 
-    # Buy BTC ($200k) — tracked as BTC/USD in alt_positions
+    # Buy BTC ($150k) — tracked as BTC/USD in alt_positions
     # (separate from exec_btc which is the main BTC strategy position)
-    print("\n=== BUY BTC $200k ===")
-    ok, fp, fq, oid = buy(client, 'BTC/USD', 200000, 2, 5)
+    print("\n=== BUY BTC $150k ===")
+    ok, fp, fq, oid = buy(client, 'BTC/USD', 150000, 2, 5)
     if ok:
-        trail = 0.01
-        tp_pct = 0.013
+        trail = 0.025  # 2.5% stop — survives overnight noise (BTC ranges 3-5% intraday)
+        tp_pct = 0.02   # 2% TP for gunner
         btc_key = 'BTC/USD'
         if btc_key in alt:
             # Merge with existing alt BTC position
@@ -116,52 +116,9 @@ def main():
     else:
         print("  BTC buy FAILED")
 
-    time.sleep(3)
-
-    # Buy ETH ($150k)
-    print("\n=== BUY ETH $150k ===")
-    ok2, fp2, fq2, oid2 = buy(client, 'ETH/USD', 150000, 2, 4)
-    if ok2:
-        trail = 0.01
-        tp_pct = 0.013
-        # We already have ETH/USD in alt_positions, need unique key
-        eth_key = 'ETH/USD'
-        if eth_key in alt:
-            # Update existing ETH position qty and recalc
-            old = alt[eth_key]
-            old_cost = old['entry_price'] * old['qty']
-            new_cost = fp2 * fq2
-            total_qty = old['qty'] + fq2
-            avg_entry = (old_cost + new_cost) / total_qty
-            alt[eth_key]['qty'] = total_qty
-            alt[eth_key]['entry_price'] = avg_entry
-            alt[eth_key]['peak_price'] = max(old.get('peak_price', avg_entry), fp2)
-            alt[eth_key]['stop'] = round(avg_entry * (1 - trail), 2)
-            alt[eth_key]['tp_price'] = round(avg_entry * (1 + tp_pct), 2)
-            alt[eth_key]['trail_pct'] = trail
-            alt[eth_key]['tp_pct'] = tp_pct
-            alt[eth_key]['entry_type'] = 'accumulation'
-            print("  Merged with existing ETH position: total %.4f ETH @ avg $%.2f" % (total_qty, avg_entry))
-        else:
-            alt[eth_key] = {
-                'entry_price': fp2,
-                'qty': fq2,
-                'peak_price': fp2,
-                'trail_pct': trail,
-                'tp_price': round(fp2 * (1 + tp_pct), 2),
-                'tp_pct': tp_pct,
-                'stop': round(fp2 * (1 - trail), 2),
-                'entry_time': now,
-                'order_id': oid2,
-                'entry_change': 0.044,
-                'price_precision': 2,
-                'amount_precision': 4,
-                'entry_type': 'accumulation',
-            }
-            print("  Added ETH/USD position")
-        results.append(('ETH', fq2, fp2, fq2 * fp2))
-    else:
-        print("  ETH buy FAILED")
+    # ETH SKIPPED — research shows ETH is weaker than BTC, below all EMAs,
+    # ETH/BTC ratio collapsing. Multiple sources say avoid.
+    print("\n=== ETH SKIPPED (too weak, all sources say avoid) ===")
 
     # Save state atomically (tmp + rename)
     import os
