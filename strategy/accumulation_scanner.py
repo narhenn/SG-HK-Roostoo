@@ -51,7 +51,7 @@ ALT_LAG_MAX_MOVE = 0.001    # Alt must have moved < 0.1% (hasn't followed)
 BETA_MIN = 1.0              # Minimum BTC beta to qualify
 BETA_WINDOW = 60            # 60-tick rolling window for beta calc
 LAG_TRAIL_PCT = 0.025       # Backtested: wider trails win. 2.5% for lag (shorter hold)
-LAG_TP_PCT = 0.03           # Backtested: only TP >= 3% beats pure trail
+LAG_TP_PCT = 0              # DISABLED: same reason as above
 LAG_TIME_STOP_MIN = 999     # DISABLED: time stops hurt P&L in backtest
 LAG_SIZE_MULT = 0.8         # Slightly smaller size (less conviction than accumulation)
 
@@ -59,7 +59,7 @@ LAG_SIZE_MULT = 0.8         # Slightly smaller size (less conviction than accumu
 MAX_POSITIONS = 6
 POS_SIZE_BASE = 0.03
 TRAIL_PCT = 0.035    # Backtested: 3.5% trail (4% best but 3.5% balances Calmar risk)
-TP_PCT = 0.03        # Backtested: only TP >= 3% beats pure trail
+TP_PCT = 0           # DISABLED: gunner TP caps winners at +3% but losses run to -3.5%. R:R = 0.43:1. Pure trail is better (+0.85% avg vs +0.54%)
 TIME_STOP_MIN = 999  # DISABLED: backtested — time stops CUT winners, hurt P&L
 FLAT_THRESHOLD = 0.003
 
