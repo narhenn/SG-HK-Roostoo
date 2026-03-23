@@ -131,8 +131,8 @@ class MomentumScanner:
 
                 # Adaptive trailing stop based on coin's volatility
                 trail_pct = _adaptive_trail(coin['change'])
-                # Take profit at half the entry momentum
-                tp_pct = max(abs(coin['change']) * 0.5, 0.01)  # min 1% TP
+                # Gunner TP at 1/3 of entry momentum (quick profit, runner rides the rest)
+                tp_pct = max(abs(coin['change']) * 0.33, 0.01)  # min 1% TP
                 tp_price = fill_price * (1 + tp_pct)
 
                 # Record position
@@ -214,12 +214,32 @@ class MomentumScanner:
                     pos['stop'] = price * (1 - new_trail)
                     log.info(f"[AltScanner] {pair}: new peak ${price:.4f}, trail={new_trail:.1%}, stop ${pos['stop']:.4f}")
 
-                # Check take profit — lock profit, move to next wave
+                # Runner-Gunner take profit
                 tp_price = pos.get('tp_price', 0)
-                if tp_price > 0 and price >= tp_price:
+                if tp_price > 0 and price >= tp_price and not pos.get('gunner_fired'):
                     tp_pct = pos.get('tp_pct', 0)
-                    log.info(f"[AltScanner] {pair}: TP HIT at ${price:.4f} (+{tp_pct*100:.1f}% from entry)")
-                    to_close.append((pair, bid, 'TAKE_PROFIT'))
+                    log.info(f"[AltScanner] {pair}: GUNNER TP at ${price:.4f} (+{tp_pct*100:.1f}%). Selling 70%, runner stays.")
+                    # Sell 70% (gunner), keep 30% (runner)
+                    gunner_qty = round(pos['qty'] * 0.7, pos.get('amount_precision', 2))
+                    if gunner_qty > 0:
+                        self._close_partial(pair, bid, gunner_qty, 'GUNNER_TP')
+                        # Convert remaining to runner
+                        pos['qty'] = round(pos['qty'] - gunner_qty, pos.get('amount_precision', 2))
+                        pos['gunner_fired'] = True
+                        pos['stop'] = entry  # Runner stop at breakeven
+                        pos['tp_price'] = 0  # No more TP, let runner trail
+                        log.info(f"[AltScanner] {pair}: RUNNER active. qty={pos['qty']} stop=breakeven ${entry:.4f}")
+                        try:
+                            from execution.alerts import send_alert
+                            send_alert(
+                                f"<b>GUNNER FIRED {pair}</b>\n"
+                                f"Sold 70% at ${bid:.4f}\n"
+                                f"Runner: {pos['qty']} units\n"
+                                f"Runner stop: breakeven ${entry:.4f}\n"
+                                f"Runner trails from here — free upside"
+                            )
+                        except Exception:
+                            pass
                     continue
 
                 # Check trailing stop
@@ -241,6 +261,50 @@ class MomentumScanner:
             self._close_alt_position(pair, bid, reason)
 
         self._save()
+
+    def _close_partial(self, pair, current_bid, qty, reason):
+        """Sell a partial quantity of an alt position (gunner exit)."""
+        pos = self.state['alt_positions'].get(pair)
+        if not pos:
+            return
+
+        price_prec = pos.get('price_precision', 4)
+        limit_price = round(current_bid, price_prec)
+
+        try:
+            order = self.client.place_order(pair, "SELL", "LIMIT", qty, limit_price)
+            detail = order.get("OrderDetail", order)
+            order_id = detail.get("OrderID") or order.get("OrderID")
+            avg_price = float(detail.get("FilledAverPrice", 0) or 0)
+
+            if not order_id:
+                log.error(f"[AltScanner] {pair}: PARTIAL SELL failed. Response: {order}")
+                return
+
+            exit_price = avg_price or limit_price
+            entry_price = pos['entry_price']
+            gross_pnl = (exit_price - entry_price) * qty
+            fee_entry = entry_price * qty * 0.001
+            fee_exit = exit_price * qty * 0.001
+            net_pnl = gross_pnl - fee_entry - fee_exit
+
+            log.info(f"[AltScanner] GUNNER SOLD {pair}: qty={qty} exit=${exit_price:.4f} P&L=${net_pnl:+.2f} reason={reason}")
+
+            # Record partial exit in trade history
+            self.state['alt_trade_history'].append({
+                'pair': pair,
+                'entry_price': entry_price,
+                'exit_price': exit_price,
+                'qty': qty,
+                'pnl': net_pnl,
+                'pnl_pct': net_pnl / (entry_price * qty) if entry_price * qty > 0 else 0,
+                'reason': reason,
+                'exit_time': datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S'),
+            })
+            self._save()
+
+        except Exception as e:
+            log.error(f"[AltScanner] {pair}: PARTIAL SELL failed: {e}")
 
     def _close_alt_position(self, pair, current_bid, reason):
         """Close an alt position."""
