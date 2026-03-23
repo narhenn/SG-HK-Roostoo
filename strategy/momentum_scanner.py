@@ -17,7 +17,7 @@ EXCLUDED_COINS = {'BONK/USD', 'DOGE/USD'}  # AmountPrecision=0 means whole units
 MIN_MOMENTUM = 0.03      # 3% minimum — only strong movers (was 1%, bought everything)
 MAX_ALT_POSITIONS = 6    # 6 concentrated positions (was 14, too scattered)
 MAX_ALT_EXPOSURE = 0.20  # 20% of portfolio ($200k) — Pran's recommendation
-ALT_TRAIL_MIN = 0.02     # Minimum trailing stop: 2%
+ALT_TRAIL_MIN = 0.01     # Minimum trailing stop: 1% (tighter for laggard plays)
 ALT_TRAIL_MAX = 0.07     # Maximum trailing stop: 7%
 SCAN_INTERVAL = 300      # Scan every 5 minutes (Pran: 30s catches noise)
 MIN_PRICE = 0.005        # Minimum coin price to trade
