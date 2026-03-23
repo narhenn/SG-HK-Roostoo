@@ -14,7 +14,7 @@ EXCLUDED_COINS = {'BONK/USD', 'DOGE/USD'}  # AmountPrecision=0 means whole units
 
 # Scanner config
 MIN_MOMENTUM = 0.01      # 1% minimum 24h change to consider
-MAX_ALT_POSITIONS = 2    # Maximum simultaneous alt positions
+MAX_ALT_POSITIONS = 4    # Maximum simultaneous alt positions
 ALT_POSITION_SIZE = 15000  # $15k per alt position
 ALT_TRAIL_MIN = 0.02     # Minimum trailing stop: 2%
 ALT_TRAIL_MAX = 0.07     # Maximum trailing stop: 7%
