@@ -202,7 +202,7 @@ def build_html():
         'UNKNOWN': '#9E9E9E',
     }
 
-    # Position info — show ALL coins held in wallet
+    # Position info — show ALL coins held in wallet with full detail
     all_ticker = {}
     try:
         all_ticker_raw = client.get_ticker()
@@ -210,46 +210,125 @@ def build_html():
     except Exception:
         pass
 
+    # Get entry prices from filled orders for each coin
+    entry_prices = {}
+    for coin_name in wallet.keys() if isinstance(wallet, dict) else []:
+        if coin_name == 'USD':
+            continue
+        pair = f"{coin_name}/USD"
+        try:
+            resp = client.query_orders(pair=pair)
+            order_list = resp.get('OrderMatched', []) if isinstance(resp, dict) else []
+            filled_buys = [o for o in order_list
+                          if (o.get('Status') or '').upper() == 'FILLED'
+                          and (o.get('Side') or '').upper() == 'BUY']
+            filled_sells = [o for o in order_list
+                           if (o.get('Status') or '').upper() == 'FILLED'
+                           and (o.get('Side') or '').upper() == 'SELL']
+            # Last unfilled buy = current position entry
+            if filled_buys:
+                # Sort by OrderID to get chronological
+                filled_buys.sort(key=lambda x: int(x.get('OrderID', 0)))
+                filled_sells.sort(key=lambda x: int(x.get('OrderID', 0)))
+                # Find the last buy that hasn't been sold
+                last_buy = filled_buys[-1]
+                entry_prices[coin_name] = float(last_buy.get('FilledAverPrice', 0))
+        except Exception:
+            pass
+
     wallet_positions = []
-    for coin_name in ['BTC', 'ETH', 'SOL', 'TUT', 'OPEN', 'TRX', 'WLFI', 'FORM', 'TON', 'BNB']:
-        coin_bal = wallet.get(coin_name, {}) if isinstance(wallet, dict) else {}
+    for coin_name in list(wallet.keys()) if isinstance(wallet, dict) else []:
+        if coin_name == 'USD':
+            continue
+        coin_bal = wallet.get(coin_name, {})
         coin_free = float(coin_bal.get('Free', 0))
         if coin_free > 0.00001:
             pair = f"{coin_name}/USD"
             t_info = all_ticker.get(pair, {})
             coin_price = float(t_info.get('LastPrice', 0))
             coin_change = float(t_info.get('Change', 0))
+            coin_bid = float(t_info.get('MaxBid', 0))
+            coin_ask = float(t_info.get('MinAsk', 0))
             coin_value = coin_free * coin_price
-            if coin_value > 1:  # Only show positions worth > $1
+            entry_p = entry_prices.get(coin_name, 0)
+            if coin_value > 1 and coin_price > 0:
+                unrealized = (coin_price - entry_p) * coin_free if entry_p > 0 else 0
+                unrealized_pct = (coin_price - entry_p) / entry_p * 100 if entry_p > 0 else 0
                 wallet_positions.append({
                     'coin': coin_name,
                     'pair': pair,
                     'qty': coin_free,
                     'price': coin_price,
+                    'entry': entry_p,
                     'value': coin_value,
                     'change': coin_change,
+                    'bid': coin_bid,
+                    'ask': coin_ask,
+                    'unrealized': unrealized,
+                    'unrealized_pct': unrealized_pct,
                 })
 
     if wallet_positions:
-        pos_rows = ""
+        pos_cards = ""
         total_pos_value = 0
+        total_unrealized = 0
         for wp in wallet_positions:
-            pnl_color = "#4CAF50" if wp['change'] >= 0 else "#F44336"
+            pnl_color = "#4CAF50" if wp['unrealized'] >= 0 else "#F44336"
+            chg_color = "#4CAF50" if wp['change'] >= 0 else "#F44336"
             total_pos_value += wp['value']
-            pos_rows += f"""
-            <div class="stat-row">
-                <span><b>{wp['coin']}</b></span>
-                <span>${wp['value']:,.0f} <span style="color:{pnl_color}">({wp['change']*100:+.1f}%)</span></span>
-            </div>"""
-        position_html = f"""
+            total_unrealized += wp['unrealized']
+
+            # Format qty based on size
+            if wp['qty'] > 10000:
+                qty_str = f"{wp['qty']:,.0f}"
+            elif wp['qty'] > 1:
+                qty_str = f"{wp['qty']:,.2f}"
+            else:
+                qty_str = f"{wp['qty']:.5f}"
+
+            pos_cards += f"""
         <div class="card">
-            <h3>Open Positions ({len(wallet_positions)})</h3>
-            {pos_rows}
-            <div class="stat-row" style="border-top: 2px solid #444; margin-top: 8px; padding-top: 8px">
-                <span><b>Total Exposure</b></span>
-                <span><b>${total_pos_value:,.0f}</b></span>
+            <h3>{wp['coin']} <span class="indicator" style="background:{chg_color};color:#fff">{wp['change']*100:+.1f}% 24h</span></h3>
+            <div class="stat-row">
+                <span>Price</span>
+                <span>${wp['price']:,.4f}</span>
+            </div>
+            <div class="stat-row">
+                <span>Entry</span>
+                <span>${wp['entry']:,.4f}</span>
+            </div>
+            <div class="stat-row">
+                <span>Quantity</span>
+                <span>{qty_str} {wp['coin']}</span>
+            </div>
+            <div class="stat-row">
+                <span>Value</span>
+                <span>${wp['value']:,.2f}</span>
+            </div>
+            <div class="stat-row">
+                <span>Bid / Ask</span>
+                <span>${wp['bid']:,.4f} / ${wp['ask']:,.4f}</span>
+            </div>
+            <div class="stat-row">
+                <span>Unrealized P&L</span>
+                <span style="color:{pnl_color};font-weight:bold">${wp['unrealized']:+,.2f} ({wp['unrealized_pct']:+.2f}%)</span>
             </div>
         </div>"""
+
+        summary_color = "#4CAF50" if total_unrealized >= 0 else "#F44336"
+        position_html = f"""
+        <div class="card full-width" style="margin-bottom:15px">
+            <h3>Open Positions ({len(wallet_positions)})</h3>
+            <div class="stat-row">
+                <span>Total Exposure</span>
+                <span>${total_pos_value:,.0f}</span>
+            </div>
+            <div class="stat-row">
+                <span>Total Unrealized P&L</span>
+                <span style="color:{summary_color};font-weight:bold">${total_unrealized:+,.2f}</span>
+            </div>
+        </div>
+        {pos_cards}"""
     else:
         position_html = """
         <div class="card">
