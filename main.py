@@ -55,7 +55,7 @@ from execution.alerts import (
     alert_drawdown, alert_kill_switch, alert_error, alert_daily_summary,
     send_alert,
 )
-from strategy.momentum_scanner import MomentumScanner
+from strategy.accumulation_scanner import AccumulationScanner
 
 # ── Setup Logging ──
 os.makedirs(LOGS_DIR, exist_ok=True)
@@ -94,7 +94,7 @@ class TradingBot:
         self.last_external_fetch = 0
         self.last_daily_summary = 0
         self.last_heartbeat = 0
-        self.alt_scanner = MomentumScanner(self.client, self.state, save_state_fn=save_state)
+        self.alt_scanner = AccumulationScanner(self.client, self.state, save_state_fn=save_state)
 
     def bootstrap(self):
         """Cold start: load historical data."""
@@ -669,7 +669,7 @@ class TradingBot:
                     log.error(f"Alt scanner error: {e}")
                 self.send_heartbeat()
                 self.send_daily_summary()
-                from strategy.momentum_scanner import _alt_lock
+                from strategy.momentum_scanner import _alt_lock  # shared lock
                 with _alt_lock:
                     save_state(self.state)
                 time.sleep(TRADE_INTERVAL_SECONDS)
