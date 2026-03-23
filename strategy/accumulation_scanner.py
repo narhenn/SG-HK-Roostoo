@@ -492,9 +492,21 @@ class AccumulationScanner(MomentumScanner):
             base *= 1.5
         # Apply regime boost (e.g., 1.5x for extreme short funding, 2x for cascade fade)
         base *= boost
-        max_total = eq * 0.20
-        cur_exp = self._current_alt_exposure()
-        remaining = max_total - cur_exp
+        # Only count NEW positions against exposure cap (legacy positions manage themselves)
+        try:
+            all_pos = self.state.get('alt_positions', {})
+            new_exposure = 0
+            ticker = self.client.get_ticker()
+            td = ticker.get('Data', {})
+            for p, pos in all_pos.items():
+                if pos.get('entry_type') in ('accumulation', 'btc_lag'):
+                    cp = float(td.get(p, {}).get('LastPrice', 0))
+                    if cp > 0:
+                        new_exposure += cp * pos.get('qty', 0)
+        except Exception:
+            new_exposure = 0
+        max_new_exposure = eq * 0.15  # 15% cap for new strategy positions only
+        remaining = max_new_exposure - new_exposure
         return max(0, min(base, remaining, 150000))
 
     def run_cycle(self):
@@ -598,8 +610,8 @@ class AccumulationScanner(MomentumScanner):
                                     'qty': fqty,
                                     'peak_price': fp,
                                     'trail_pct': LAG_TRAIL_PCT,
-                                    'tp_price': round(fp * (1 + LAG_TP_PCT), pp),
-                                    'tp_pct': LAG_TP_PCT,
+                                    'tp_price': 0,  # No gunner — pure trailing stop
+                                    'tp_pct': 0,
                                     'stop': round(fp * (1 - LAG_TRAIL_PCT), pp),
                                     'entry_time': datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S'),
                                     'order_id': oid,
@@ -708,8 +720,8 @@ class AccumulationScanner(MomentumScanner):
                         'qty': fqty,
                         'peak_price': fp,
                         'trail_pct': TRAIL_PCT,
-                        'tp_price': round(fp * (1 + TP_PCT), pp),
-                        'tp_pct': TP_PCT,
+                        'tp_price': 0,  # No gunner — pure trailing stop
+                        'tp_pct': 0,
                         'stop': round(fp * (1 - TRAIL_PCT), pp),
                         'entry_time': datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S'),
                         'order_id': oid,
@@ -807,8 +819,8 @@ class AccumulationScanner(MomentumScanner):
                         except (ValueError, TypeError):
                             pass
 
-                # RSI exit (accumulation, in profit)
-                if pos.get('entry_type') == 'accumulation' and pnl > 0.003:
+                # RSI exit (accumulation + btc_lag, in profit)
+                if pos.get('entry_type') in ('accumulation', 'btc_lag') and pnl > 0.003:
                     cr = self.buffer.rsi(pair, RSI_PERIOD)
                     if cr > 80:
                         log.info("[AccumScan] %s: RSI EXIT %.0f P&L=%.2f%%" % (pair, cr, pnl*100))
