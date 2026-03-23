@@ -340,6 +340,24 @@ class TradeExecutor:
             self._log_event("SELL ignored: invalid position qty")
             return None
 
+        # Cancel ALL pending orders first — previous failed sells may have
+        # locked BTC in phantom pending orders, causing new sells to be rejected
+        try:
+            pending = self.client.query_orders(pair=TRADING_PAIR)
+            order_list = pending.get('OrderMatched', []) if isinstance(pending, dict) else []
+            for o in order_list:
+                o_status = (o.get('Status') or '').upper()
+                if o_status in ('PENDING', 'NEW', 'PARTIALLY_FILLED'):
+                    o_id = o.get('OrderID')
+                    if o_id:
+                        try:
+                            self.client.cancel_order(str(o_id))
+                            log.info(f"Cancelled pending order {o_id} before sell")
+                        except Exception:
+                            pass
+        except Exception as e:
+            log.warning(f"Could not cancel pending orders: {e}")
+
         # Sync qty with actual wallet balance to prevent rejection
         try:
             balance = self.client.get_balance()
