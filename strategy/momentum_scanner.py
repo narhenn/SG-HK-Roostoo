@@ -16,10 +16,10 @@ EXCLUDED_COINS = {'BONK/USD', 'DOGE/USD'}  # AmountPrecision=0 means whole units
 # Scanner config
 MIN_MOMENTUM = 0.01      # 1% minimum 24h change to consider
 MAX_ALT_POSITIONS = 8    # Maximum simultaneous alt positions
-MAX_ALT_EXPOSURE = 0.20  # Max 20% of portfolio (~$200k) — ramp up after proving profitable
+MAX_ALT_EXPOSURE = 0.35  # Max 35% of portfolio (~$350k)
 ALT_TRAIL_MIN = 0.02     # Minimum trailing stop: 2%
 ALT_TRAIL_MAX = 0.07     # Maximum trailing stop: 7%
-SCAN_INTERVAL = 120      # Scan every 2 minutes (faster entry)
+SCAN_INTERVAL = 30       # Scan every 30 seconds (catch momentum fast)
 MIN_PRICE = 0.005        # Minimum coin price to trade
 COIN_COOLDOWN = 1800     # 30 min cooldown per coin after selling (seconds)
 MOMENTUM_REVERSAL = -0.02  # -2% 24h change = real reversal (was -0.5%)
