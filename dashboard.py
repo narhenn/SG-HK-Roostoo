@@ -84,11 +84,22 @@ def build_html():
         btc_held = 0
         all_ticker_data = {}
 
-    # Fetch order history from API — ALL coins, not just BTC
+    # Fetch order history from API — ALL coins
     filled_orders = []
     try:
-        for query_pair in ['BTC/USD', 'TUT/USD', 'OPEN/USD', 'WLFI/USD', 'WIF/USD',
-                          'TRX/USD', 'FORM/USD', 'TON/USD', 'ETH/USD', 'SOL/USD']:
+        # Get all pairs from wallet + known traded pairs
+        query_pairs = set()
+        if isinstance(wallet, dict):
+            for coin_name in wallet:
+                if coin_name != 'USD':
+                    query_pairs.add(f"{coin_name}/USD")
+        # Add known pairs we've traded
+        for p in ['BTC/USD','ETH/USD','SOL/USD','BNB/USD','XRP/USD','CAKE/USD','AVAX/USD',
+                   'EDEN/USD','WIF/USD','TUT/USD','OPEN/USD','WLFI/USD','FORM/USD',
+                   'TON/USD','TRX/USD','STO/USD','XLM/USD','ZEC/USD','LINK/USD',
+                   'HBAR/USD','POL/USD','FET/USD','S/USD','PLUME/USD','LTC/USD']:
+            query_pairs.add(p)
+        for query_pair in query_pairs:
             try:
                 resp = client.query_orders(pair=query_pair)
                 order_list = resp.get('OrderMatched', []) if isinstance(resp, dict) else []
@@ -363,7 +374,7 @@ def build_html():
 
     # Trade history table
     if trade_history:
-        recent = trade_history[-10:][::-1]
+        recent = trade_history[::-1]  # all trades, newest first
         rows = ""
         for t in recent:
             pnl = t.get('pnl', 0)
@@ -382,13 +393,15 @@ def build_html():
             </tr>"""
         trades_html = f"""
         <div class="card full-width">
-            <h3>Recent Trades</h3>
+            <h3>Recent Trades ({len(recent)} total)</h3>
+            <div style="max-height: 400px; overflow-y: auto;">
             <table>
                 <thead>
                     <tr><th>Pair</th><th>Side</th><th>Entry</th><th>Exit</th><th>P&L %</th><th>P&L $</th><th>Fees</th><th>Duration</th></tr>
                 </thead>
                 <tbody>{rows}</tbody>
             </table>
+            </div>
         </div>
         """
     else:
