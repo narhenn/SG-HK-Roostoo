@@ -58,7 +58,13 @@ SCANNER_DIP_THRESH = -0.04      # -4% dip trigger (backtest winner: +$3,237, 86%
 
 # ── Shared ──
 LEGACY_STOP_PCT = 0.07
-SELL_ON_START = ["WIF/USD"]
+SELL_ON_START = ["WIF/USD", "EDEN/USD", "S/USD"]
+
+# Legacy TP overrides (coin -> TP multiplier)
+LEGACY_TP = {
+    "CAKE/USD": 0.05,   # +5%
+    "AVAX/USD": 0.06,   # +6%
+}
 
 PRECISION = {
     "BTC/USD":  {"price": 2, "amount": 5},
@@ -446,10 +452,12 @@ def adopt_legacy(state, wallet, prices):
         last = p.get("last", 0)
         if last <= 0 or held * last < 50:  # skip dust
             continue
+        tp_pct = LEGACY_TP.get(pair, 0)
         state["legacy"][pair] = {
-            "entry_price": last,  # assume current price as entry
+            "entry_price": last,
             "qty": held,
             "stop": round(last * (1 - LEGACY_STOP_PCT), prec(pair)["price"]),
+            "tp": round(last * (1 + tp_pct), prec(pair)["price"]) if tp_pct > 0 else 0,
             "time": datetime.now(timezone.utc).isoformat(),
         }
         log.info(f"Legacy adopted: {pair} qty={held} stop=${state['legacy'][pair]['stop']:,.2f}")
@@ -467,11 +475,17 @@ def legacy_check_exits(state, prices, wallet):
         bid = p.get("bid", 0)
         if last <= 0:
             continue
+        reason = None
         if last <= pos["stop"]:
+            reason = "STOP"
+        elif pos.get("tp") and pos["tp"] > 0 and last >= pos["tp"]:
+            reason = "TP"
+        if reason:
             sell_qty = min(pos["qty"], held)
             place_sell(pair, sell_qty, bid)
             pnl = (bid - pos["entry_price"]) * sell_qty
-            send_telegram(f"LEGACY STOP {pair}\nP&L: ${pnl:+,.0f}")
+            send_telegram(f"LEGACY {reason} {pair}\nP&L: ${pnl:+,.0f}")
+            log.info(f"Legacy {reason} {pair}: P&L ${pnl:+,.0f}")
             to_remove.append(pair)
     for pair in to_remove:
         state["legacy"].pop(pair, None)
