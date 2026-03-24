@@ -398,7 +398,7 @@ def scanner_check_exits(state, prices, wallet):
             from datetime import datetime, timezone
             try:
                 t = datetime.fromisoformat(pos["time"].replace("Z",""))
-                if (datetime.now(timezone.utc).replace(tzinfo=None) - t).total_seconds() > 1800:
+                if (datetime.now(timezone.utc).replace(tzinfo=None) - t).total_seconds() > 120:
                     to_remove.append(pair)
             except Exception:
                 to_remove.append(pair)
