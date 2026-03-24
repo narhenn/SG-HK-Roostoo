@@ -57,8 +57,8 @@ LAG_TIME_STOP_MIN = 999     # DISABLED: time stops hurt P&L in backtest
 LAG_SIZE_MULT = 0.8         # Slightly smaller size (less conviction than accumulation)
 
 # Position management
-MAX_POSITIONS = 6
-POS_SIZE_BASE = 0.03
+MAX_POSITIONS = 4           # Fewer, bigger (like JuinStreet)
+POS_SIZE_BASE = 0.15        # 15% of portfolio = ~$150k per position
 HARD_STOP_PCT = 0.05  # 5% hard stop — only fires if thesis is dead. No trailing.
 TP_PCT = 0           # DISABLED: gunner TP caps winners at +3% but losses run to -3.5%. R:R = 0.43:1. Pure trail is better (+0.85% avg vs +0.54%)
 TIME_STOP_MIN = 999  # DISABLED: backtested — time stops CUT winners, hurt P&L
@@ -646,7 +646,7 @@ class AccumulationScanner(MomentumScanner):
                         new_exposure += cp * pos.get('qty', 0)
         except Exception:
             new_exposure = 0
-        max_new_exposure = eq * 0.15  # 15% cap for new strategy positions only
+        max_new_exposure = eq * 0.60  # 60% cap — deploy big like JuinStreet
         remaining = max_new_exposure - new_exposure
         return max(0, min(base, remaining, 150000))
 
