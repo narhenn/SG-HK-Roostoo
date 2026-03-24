@@ -44,14 +44,19 @@ SWING_TP = 0.05
 SWING_STOP = 0.04
 DIP_BUY_PCT = 0.02
 
-# ── Scanner params (DISABLED — backtest showed -$235k over 125 days) ──
-SCANNER_PAIRS = ["CAKE/USD", "AVAX/USD", "AAVE/USD", "LINK/USD",
-                 "FET/USD", "PENDLE/USD", "TAO/USD", "SUI/USD"]
-SCANNER_POS_USD = 25000
-SCANNER_MAX_POS = 0  # DISABLED
+# ── Scanner params ──
+# Scans ALL coins on exchange except swing coins and excluded junk
+SCANNER_EXCLUDE = set(SWING_PAIRS) | {
+    "BONK/USD", "DOGE/USD", "SHIB/USD", "PEPE/USD", "FLOKI/USD",
+    "PAXG/USD", "1000CHEEMS/USD", "PUMP/USD", "PENGU/USD",
+    "TUT/USD", "SOMI/USD", "HEMI/USD", "BMT/USD",  # low liquidity junk
+}
+SCANNER_PAIRS = []  # populated dynamically from exchange at startup
+SCANNER_MAX_POS = 0            # flip to 8 to enable
+# No fixed budget — scanner uses whatever cash is free after swing reserve
 SCANNER_TP = 0.05
-SCANNER_STOP = 0.07
-SCANNER_DIP_THRESH = -0.03
+SCANNER_STOP = 0.10             # wide stop — backtest showed alts always bounce
+SCANNER_DIP_THRESH = -0.04      # -4% dip trigger (backtest winner: +$3,237, 86% WR)
 
 # ── Shared ──
 LEGACY_STOP_PCT = 0.07
@@ -300,47 +305,76 @@ def scanner_cash_available(wallet, state):
     """Cash available for scanner = total cash - swing reserve if swing is WAITING."""
     cash = wallet.get("USD", 0)
     if state["swing"]["phase"] == "WAITING":
-        # Reserve $750k for swing re-entry
-        cash = max(0, cash - 750000)
+        # Reserve swing capital for re-entry
+        cash = max(0, cash - sum(SWING_ALLOC.values()))
     return cash
+
+def scanner_calc_size(change, cash_available):
+    """Dynamic sizing based on available cash and dip magnitude.
+    Allocates a % of available cash. Bigger dip = bigger %.
+    -3% to -4% dip: 15% of cash.  -4% to -6%: 20%.  -6%+: 30%."""
+    dip = abs(change)
+    if dip >= 0.06:
+        pct = 0.30
+    elif dip >= 0.04:
+        pct = 0.20
+    else:
+        pct = 0.15
+    size = cash_available * pct
+    # Floor at $5k, cap at $40k
+    size = max(min(size, 40000), 0)
+    if size < 5000:
+        return 0
+    return size
 
 def scanner_check_entries(state, prices, wallet):
     entries = state["scanner"]["entries"]
     if len(entries) >= SCANNER_MAX_POS:
         return
     cash = scanner_cash_available(wallet, state)
-    if cash < SCANNER_POS_USD:
+    if cash < 5000:
         return
+
+    # Collect all signals, sort by biggest dip first
+    signals = []
     for pair in SCANNER_PAIRS:
         if pair in entries:
             continue
-        if len(entries) >= SCANNER_MAX_POS:
-            break
         p = prices.get(pair)
         if not p or p["ask"] <= 0:
             continue
         change = p.get("change", 0)
-        # Signal: down 3%+ on the day
         if change > SCANNER_DIP_THRESH:
             continue
-        # RSI proxy: price near 24h low (last price close to bid, spread tight)
-        # Simple heuristic: if it's dipped 3%+ we take it
+        signals.append((change, pair, p))
+
+    signals.sort()  # most negative (biggest dip) first
+
+    for change, pair, p in signals:
+        if len(entries) >= SCANNER_MAX_POS:
+            break
+        size = scanner_calc_size(change, cash)
+        if size < 5000:
+            continue
         ask = p["ask"]
-        qty = SCANNER_POS_USD / ask
-        log.info(f"Scanner signal: {pair} change={change:.1%}")
-        result = place_buy(pair, qty, ask)
+        pr = prec(pair)
+        qty = round(size / ask, pr["amount"])
+        if qty <= 0:
+            continue
+        log.info(f"Scanner signal: {pair} change={change:.1%} size=${size:,.0f}")
+        result = place_buy(pair, qty, round(ask, pr["price"]))
         if result and result["filled"] > 0:
             ep = result["fill_price"]
+            actual_cost = ep * result["filled"]
             entries[pair] = {
                 "entry_price": ep, "qty": result["filled"],
+                "size_usd": actual_cost,
                 "tp": round(ep * (1 + SCANNER_TP), prec(pair)["price"]),
                 "stop": round(ep * (1 - SCANNER_STOP), prec(pair)["price"]),
                 "time": datetime.now(timezone.utc).isoformat(),
             }
-            send_telegram(f"SCANNER BUY {pair}\nChange: {change:.1%}\nQty: {result['filled']}\nPrice: ${ep:,.2f}")
-            cash -= SCANNER_POS_USD
-            if cash < SCANNER_POS_USD:
-                break
+            send_telegram(f"SCANNER BUY {pair}\nDip: {change:.1%}\nSize: ${actual_cost:,.0f}\nPrice: ${ep:,.4f}")
+            cash -= actual_cost
 
 def scanner_check_exits(state, prices, wallet):
     entries = state["scanner"]["entries"]
@@ -493,8 +527,21 @@ def portfolio_log(state, wallet, prices):
 # ── Main loop ──
 
 def main():
+    global SCANNER_PAIRS
     log.info("Combined bot starting")
     send_telegram("Combined bot started (swing + scanner)")
+
+    # Load all tradeable pairs for scanner dynamically
+    try:
+        info = api_get("/v3/exchangeInfo")
+        all_pairs = list(info.get("TradePairs", {}).keys())
+        SCANNER_PAIRS = [p for p in all_pairs if p not in SCANNER_EXCLUDE]
+        log.info(f"Scanner watching {len(SCANNER_PAIRS)} coins (excluded {len(SCANNER_EXCLUDE)})")
+    except Exception as e:
+        log.error(f"Failed to load exchange pairs: {e}")
+        SCANNER_PAIRS = ["CAKE/USD", "AVAX/USD", "AAVE/USD", "LINK/USD",
+                         "FET/USD", "PENDLE/USD", "TAO/USD", "SUI/USD"]
+
     state = load_state()
 
     while True:
