@@ -17,7 +17,8 @@ from strategy.momentum_scanner import MomentumScanner, _alt_lock, EMERGENCY_LOSS
 log = logging.getLogger("TradingBot")
 
 # ── Config ──
-SCAN_INTERVAL = 60
+SCAN_INTERVAL = 60          # Accumulation scan every 60s (needs time for signals to develop)
+LAG_SCAN_INTERVAL = 10      # BTC lag check every 10s (must catch the 1-3 min window)
 COLD_START_TICKS = 55
 BUFFER_MAX_TICKS = 300
 BUFFER_FILE = 'data/price_buffer.jsonl'
@@ -544,6 +545,82 @@ class AccumulationScanner(MomentumScanner):
         candidates.sort(key=lambda x: -x[0])
         return candidates[:3]  # Top 3 laggards
 
+    def _run_lag_scan(self, all_data):
+        """BTC beta lag scan — runs every 10s for fast response."""
+        if self.state.get('_competition_protect'):
+            return
+        if time.time() < self._loss_cooldown_until:
+            return
+
+        all_pos = self.state.get('alt_positions', {})
+        n_new = sum(1 for p in all_pos.values() if p.get('entry_type') in ('accumulation', 'btc_lag'))
+        if n_new >= MAX_POSITIONS:
+            return
+
+        lag_cands = self._find_btc_lag_candidates(all_data)
+        if not lag_cands:
+            return
+
+        exinfo = self._get_exchange_info()
+        if not exinfo:
+            return
+
+        for score, pair, info, beta_val, corr in lag_cands:
+            if n_new >= MAX_POSITIONS:
+                break
+            sz = self._calc_size(pair, info, boost=1.0)
+            sz = sz * LAG_SIZE_MULT
+            if sz < 1000:
+                continue
+            ask_price = float(info.get('MinAsk', 0))
+            if ask_price <= 0:
+                continue
+            # HTF trend check
+            if not self._htf_trend_ok(pair):
+                continue
+            prec = exinfo.get(pair, {})
+            pp = int(prec.get('PricePrecision', 4))
+            ap_val = int(prec.get('AmountPrecision', 2))
+            am = 10 ** ap_val
+            qty = math.floor(sz / ask_price * am) / am
+            if qty <= 0:
+                continue
+            lp = round(ask_price, pp)
+            log.info("[BtcLag] SIGNAL %s beta=%.2f corr=%.2f $%d" % (pair, beta_val, corr, sz))
+            try:
+                order = self.client.place_order(pair, "BUY", "LIMIT", qty, lp)
+                det = order.get("OrderDetail", order)
+                oid = det.get("OrderID") or order.get("OrderID")
+                fq = float(det.get("FilledQuantity", 0) or 0)
+                ap2 = float(det.get("FilledAverPrice", 0) or 0)
+                st = str(det.get("Status", "")).upper()
+                if not oid or (st not in ("FILLED", "COMPLETED", "") and fq <= 0):
+                    continue
+                fp = ap2 or lp
+                fqty = fq or qty
+                with _alt_lock:
+                    self.state['alt_positions'][pair] = {
+                        'entry_price': fp, 'qty': fqty, 'peak_price': fp,
+                        'trail_pct': LAG_TRAIL_PCT, 'tp_price': 0, 'tp_pct': 0,
+                        'stop': round(fp * (1 - LAG_TRAIL_PCT), pp),
+                        'entry_time': datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S'),
+                        'order_id': oid, 'entry_change': float(info.get('Change', 0)),
+                        'price_precision': pp, 'amount_precision': ap_val,
+                        'entry_type': 'btc_lag', 'entry_beta': beta_val, 'entry_corr': corr,
+                    }
+                    self._save()
+                n_new += 1
+                log.info("[BtcLag] BOUGHT %s: %s@$%.4f=$%.0f beta=%.2f" % (pair, fqty, fp, fqty*fp, beta_val))
+                try:
+                    from execution.alerts import send_alert
+                    send_alert("<b>BTC LAG BUY %s</b>\nBeta: %.2f | $%s\nBTC moved, alt lagging" % (
+                        pair, beta_val, format(int(fqty*fp), ',')))
+                except Exception:
+                    pass
+                time.sleep(2)
+            except Exception as e:
+                log.error("[BtcLag] %s: BUY error: %s" % (pair, e))
+
     def _calc_size(self, pair, info, boost=1.0):
         eq = self.state.get('current_equity', 1000000)
         base = eq * POS_SIZE_BASE
@@ -574,7 +651,7 @@ class AccumulationScanner(MomentumScanner):
         return max(0, min(base, remaining, 150000))
 
     def run_cycle(self):
-        """Update buffer + scan for accumulation entries."""
+        """Update buffer + scan for entries. Lag every 10s, accumulation every 60s."""
         now = time.time()
 
         # Always update buffer
@@ -588,6 +665,14 @@ class AccumulationScanner(MomentumScanner):
 
         if self.state.get('_competition_protect'):
             return
+
+        # BTC lag runs every 10s (fast response to BTC moves)
+        last_lag = getattr(self, '_last_lag_scan', 0)
+        if now - last_lag >= LAG_SCAN_INTERVAL and self.buffer.tick_count >= 30:
+            self._last_lag_scan = now
+            self._run_lag_scan(all_data)
+
+        # Accumulation runs every 60s (needs time for signals to develop)
         if now - self.last_scan < SCAN_INTERVAL:
             return
         self.last_scan = now
@@ -618,103 +703,12 @@ class AccumulationScanner(MomentumScanner):
             return
 
         # Count only NEW positions (accumulation + btc_lag) against the cap.
-        # Legacy momentum positions manage themselves via trailing stops.
         all_pos = self.state.get('alt_positions', {})
         n_new = sum(1 for p in all_pos.values() if p.get('entry_type') in ('accumulation', 'btc_lag'))
         if n_new >= MAX_POSITIONS:
             return
 
-        # ── Strategy 1: BTC Beta Lag (runs every cycle, faster response) ──
-        if self.buffer.tick_count >= 30:
-            lag_cands = self._find_btc_lag_candidates(all_data)
-            if lag_cands:
-                exinfo_lag = self._get_exchange_info()
-                if exinfo_lag:
-                    for score, pair, info, beta_val, corr in lag_cands:
-                        if n_new >= MAX_POSITIONS:
-                            break
-                        sz = self._calc_size(pair, info, boost=regime_boost)
-                        sz = sz * LAG_SIZE_MULT  # Slightly smaller for lag trades
-                        if sz < 1000:
-                            continue
-
-                        ask_price = float(info.get('MinAsk', 0))
-                        if ask_price <= 0:
-                            continue
-
-                        prec = exinfo_lag.get(pair, {})
-                        pp = int(prec.get('PricePrecision', 4))
-                        ap_val = int(prec.get('AmountPrecision', 2))
-                        am = 10 ** ap_val
-                        qty = math.floor(sz / ask_price * am) / am
-                        if qty <= 0:
-                            continue
-                        lp = round(ask_price, pp)
-
-                        log.info("[BtcLag] SIGNAL %s beta=%.2f corr=%.2f $%d" % (
-                            pair, beta_val, corr, sz))
-
-                        try:
-                            order = self.client.place_order(pair, "BUY", "LIMIT", qty, lp)
-                            det = order.get("OrderDetail", order)
-                            oid = det.get("OrderID") or order.get("OrderID")
-                            fq = float(det.get("FilledQuantity", 0) or 0)
-                            ap2 = float(det.get("FilledAverPrice", 0) or 0)
-                            st = str(det.get("Status", "")).upper()
-
-                            if not oid or (st not in ("FILLED", "COMPLETED", "") and fq <= 0):
-                                continue
-
-                            fp = ap2 or lp
-                            fqty = fq or qty
-
-                            with _alt_lock:
-                                self.state['alt_positions'][pair] = {
-                                    'entry_price': fp,
-                                    'qty': fqty,
-                                    'peak_price': fp,
-                                    'trail_pct': LAG_TRAIL_PCT,
-                                    'tp_price': 0,  # No gunner — pure trailing stop
-                                    'tp_pct': 0,
-                                    'stop': round(fp * (1 - LAG_TRAIL_PCT), pp),
-                                    'entry_time': datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S'),
-                                    'order_id': oid,
-                                    'entry_change': float(info.get('Change', 0)),
-                                    'price_precision': pp,
-                                    'amount_precision': ap_val,
-                                    'entry_type': 'btc_lag',
-                                    'entry_beta': beta_val,
-                                    'entry_corr': corr,
-                                }
-                                self._save()
-                            n_new += 1
-
-                            log.info("[BtcLag] BOUGHT %s: %s@$%.4f=$%.0f beta=%.2f" % (
-                                pair, fqty, fp, fqty*fp, beta_val))
-                            try:
-                                from execution.alerts import send_alert
-                                send_alert(
-                                    "<b>BTC LAG BUY %s</b>\n"
-                                    "Beta: %.2f | Corr: %.2f\n"
-                                    "$%s | Stop: -%.1f%%\n"
-                                    "BTC moved +%.2f%%, alt hasn't followed" % (
-                                        pair, beta_val, corr,
-                                        format(int(fqty*fp), ','),
-                                        LAG_TRAIL_PCT*100,
-                                        self.buffer.roc('BTC/USD', BTC_MOVE_LOOKBACK)*100))
-                            except Exception:
-                                pass
-                            time.sleep(2)
-                        except Exception as e:
-                            log.error("[BtcLag] %s: BUY error: %s" % (pair, e))
-
-        # Recheck new position count after lag trades
-        all_pos = self.state.get('alt_positions', {})
-        n_new = sum(1 for p in all_pos.values() if p.get('entry_type') in ('accumulation', 'btc_lag'))
-        if n_new >= MAX_POSITIONS:
-            return
-
-        # ── Strategy 2: Accumulation Detection ──
+        # ── Accumulation Detection (every 60s) ──
         # Score all coins
         cands = []
         for pair, info in all_data.items():
