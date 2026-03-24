@@ -59,7 +59,7 @@ LAG_SIZE_MULT = 0.8         # Slightly smaller size (less conviction than accumu
 # Position management
 MAX_POSITIONS = 6
 POS_SIZE_BASE = 0.03
-TRAIL_PCT = 0.025    # WITH MTF filter: 2.5% trail = composite 8.5 (beats 4% at 3.7)
+HARD_STOP_PCT = 0.05  # 5% hard stop — only fires if thesis is dead. No trailing.
 TP_PCT = 0           # DISABLED: gunner TP caps winners at +3% but losses run to -3.5%. R:R = 0.43:1. Pure trail is better (+0.85% avg vs +0.54%)
 TIME_STOP_MIN = 999  # DISABLED: backtested — time stops CUT winners, hurt P&L
 FLAT_THRESHOLD = 0.003
@@ -601,8 +601,8 @@ class AccumulationScanner(MomentumScanner):
                 with _alt_lock:
                     self.state['alt_positions'][pair] = {
                         'entry_price': fp, 'qty': fqty, 'peak_price': fp,
-                        'trail_pct': LAG_TRAIL_PCT, 'tp_price': 0, 'tp_pct': 0,
-                        'stop': round(fp * (1 - LAG_TRAIL_PCT), pp),
+                        'trail_pct': 0, 'tp_price': 0, 'tp_pct': 0,
+                        'stop': round(fp * (1 - HARD_STOP_PCT), pp),  # Fixed -5% hard stop
                         'entry_time': datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S'),
                         'order_id': oid, 'entry_change': float(info.get('Change', 0)),
                         'price_precision': pp, 'amount_precision': ap_val,
@@ -777,10 +777,10 @@ class AccumulationScanner(MomentumScanner):
                         'entry_price': fp,
                         'qty': fqty,
                         'peak_price': fp,
-                        'trail_pct': TRAIL_PCT,
-                        'tp_price': 0,  # No gunner — pure trailing stop
+                        'trail_pct': 0,  # No trailing — hard stop only
+                        'tp_price': 0,
                         'tp_pct': 0,
-                        'stop': round(fp * (1 - TRAIL_PCT), pp),
+                        'stop': round(fp * (1 - HARD_STOP_PCT), pp),  # Fixed -5% hard stop
                         'entry_time': datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S'),
                         'order_id': oid,
                         'entry_change': float(info.get('Change', 0)),
@@ -885,43 +885,14 @@ class AccumulationScanner(MomentumScanner):
                         to_close.append((pair, bid, 'RSI_OVERBOUGHT', chg))
                         continue
 
-                # Peak + trail update
-                if price > peak:
-                    pos['peak_price'] = price
-                    tr = pos.get('trail_pct', TRAIL_PCT)
-                    ns = price * (1 - tr)
-                    if pos.get('gunner_fired'):
-                        ns = max(ns, entry * 1.003)
-                    if ns > pos.get('stop', 0):
-                        pos['stop'] = ns
-
-                # Gunner TP
-                tp = pos.get('tp_price', 0)
-                if tp > 0 and price >= tp and not pos.get('gunner_fired'):
-                    gq = round(pos['qty'] * 0.7, pos.get('amount_precision', 2))
-                    if gq > 0 and self._close_partial(pair, bid, gq, 'GUNNER_TP'):
-                        pos['qty'] = round(pos['qty'] - gq, pos.get('amount_precision', 2))
-                        pos['gunner_fired'] = True
-                        pos['stop'] = entry * 1.003
-                        pos['tp_price'] = 0
-                        try:
-                            from execution.alerts import send_alert
-                            send_alert("<b>GUNNER %s</b>\n70%% sold at $%.4f\nRunner at breakeven" % (pair, bid))
-                        except Exception:
-                            pass
+                # HARD STOP ONLY — no trailing, no gunner
+                # Stop is fixed at entry * (1 - HARD_STOP_PCT), never moves
+                # This lets winners run through normal 2-3% dips
+                hard_stop = entry * (1 - HARD_STOP_PCT)
+                if price <= hard_stop:
+                    log.info("[AccumScan] %s: HARD STOP at %.2f%% loss" % (pair, pnl*100))
+                    to_close.append((pair, bid, 'HARD_STOP', chg))
                     continue
-
-                # Trailing stop
-                if price <= pos['stop']:
-                    to_close.append((pair, bid, 'TRAILING_STOP', chg))
-                    continue
-
-                # Legacy momentum reversal
-                if not pos.get('entry_type') and chg < -0.005:
-                    if pnl > 0.003:
-                        to_close.append((pair, bid, 'MOMENTUM_REVERSAL', chg))
-                    elif pnl < -0.01:
-                        to_close.append((pair, bid, 'MOMENTUM_LOSS_CUT', chg))
 
             except Exception as e:
                 log.error("[AccumScan] %s exit error: %s" % (pair, e))
