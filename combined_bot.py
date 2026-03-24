@@ -49,7 +49,8 @@ DIP_BUY_PCT = 0.02
 SCANNER_EXCLUDE = set(SWING_PAIRS) | {
     "BONK/USD", "DOGE/USD", "SHIB/USD", "PEPE/USD", "FLOKI/USD",
     "PAXG/USD", "1000CHEEMS/USD", "PUMP/USD", "PENGU/USD",
-    "TUT/USD", "SOMI/USD", "HEMI/USD", "BMT/USD",  # low liquidity junk
+    "TUT/USD", "SOMI/USD", "HEMI/USD", "BMT/USD", "STO/USD",  # low liquidity junk
+    "LINEA/USD", "AVNT/USD", "BIO/USD", "MIRA/USD", "OPEN/USD",  # micro caps
 }
 SCANNER_PAIRS = []  # populated dynamically from exchange at startup
 SCANNER_MAX_POS = 0            # flip to 8 to enable
@@ -340,12 +341,21 @@ def scanner_check_entries(state, prices, wallet):
     for pair in SCANNER_PAIRS:
         if pair in entries:
             continue
+        # Skip coins already in wallet (legacy positions)
+        coin = pair.split("/")[0]
+        if wallet.get(coin, 0) > 0:
+            continue
         p = prices.get(pair)
         if not p or p["ask"] <= 0:
             continue
         change = p.get("change", 0)
         if change > SCANNER_DIP_THRESH:
             continue
+        # Skip if spread is too wide (>0.5% = illiquid)
+        if p["bid"] > 0 and p["ask"] > 0:
+            spread = (p["ask"] - p["bid"]) / p["bid"]
+            if spread > 0.005:
+                continue
         signals.append((change, pair, p))
 
     signals.sort()  # most negative (biggest dip) first
@@ -358,11 +368,13 @@ def scanner_check_entries(state, prices, wallet):
             continue
         ask = p["ask"]
         pr = prec(pair)
-        qty = round(size / ask, pr["amount"])
+        # Cross the spread: buy at ask + 0.05% to ensure fill on mock exchange
+        buy_price = round(ask * 1.0005, pr["price"])
+        qty = round(size / buy_price, pr["amount"])
         if qty <= 0:
             continue
         log.info(f"Scanner signal: {pair} change={change:.1%} size=${size:,.0f}")
-        result = place_buy(pair, qty, round(ask, pr["price"]))
+        result = place_buy(pair, qty, buy_price)
         if result and result["filled"] > 0:
             ep = result["fill_price"]
             actual_cost = ep * result["filled"]
@@ -375,14 +387,28 @@ def scanner_check_entries(state, prices, wallet):
             }
             send_telegram(f"SCANNER BUY {pair}\nDip: {change:.1%}\nSize: ${actual_cost:,.0f}\nPrice: ${ep:,.4f}")
             cash -= actual_cost
+        else:
+            # Failed to fill — cooldown this pair for 30 min
+            entries[pair] = {"failed": True, "time": datetime.now(timezone.utc).isoformat()}
+            log.info(f"Scanner: {pair} order not filled, cooling down 30min")
 
 def scanner_check_exits(state, prices, wallet):
     entries = state["scanner"]["entries"]
     to_remove = []
     for pair, pos in entries.items():
+        # Remove failed/cooldown entries after 30 min
+        if pos.get("failed"):
+            from datetime import datetime, timezone
+            try:
+                t = datetime.fromisoformat(pos["time"].replace("Z",""))
+                if (datetime.now(timezone.utc).replace(tzinfo=None) - t).total_seconds() > 1800:
+                    to_remove.append(pair)
+            except Exception:
+                to_remove.append(pair)
+            continue
         coin = pair.split("/")[0]
         held = wallet.get(coin, 0)
-        if held < pos["qty"] * 0.01:
+        if held < pos.get("qty", 0) * 0.01:
             log.info(f"Scanner: {pair} no longer in wallet, removing")
             to_remove.append(pair)
             continue
