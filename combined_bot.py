@@ -47,10 +47,7 @@ DIP_BUY_PCT = 0.02
 # ── Scanner params ──
 # Scans ALL coins on exchange except swing coins and excluded junk
 SCANNER_EXCLUDE = set(SWING_PAIRS) | {
-    "BONK/USD", "DOGE/USD", "SHIB/USD", "PEPE/USD", "FLOKI/USD",
-    "PAXG/USD", "1000CHEEMS/USD", "PUMP/USD", "PENGU/USD",
-    "TUT/USD", "SOMI/USD", "HEMI/USD", "BMT/USD", "STO/USD",  # low liquidity junk
-    "LINEA/USD", "AVNT/USD", "BIO/USD", "MIRA/USD", "OPEN/USD",  # micro caps
+    "PAXG/USD",  # gold token, doesn't move like crypto
 }
 SCANNER_PAIRS = []  # populated dynamically from exchange at startup
 SCANNER_MAX_POS = 0            # flip to 8 to enable
