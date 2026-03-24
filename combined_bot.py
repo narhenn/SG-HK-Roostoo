@@ -521,10 +521,10 @@ def main():
             adopt_legacy(state, wallet, prices)
 
             # ── SWING ──
-            swing_update_highs(state, prices)
             swing_check_exits(state, prices, wallet)
             if swing_should_buy(state, prices):
                 swing_deploy(state, prices)
+            swing_update_highs(state, prices)
 
             # ── SCANNER ──
             scanner_check_exits(state, prices, wallet)
