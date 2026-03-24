@@ -52,3 +52,7 @@ execution/alerts_log.txt
 
 # Temp
 *.tmp
+config_secrets_deploy.py
+deploy_*.py
+patch_*.py
+prefill_*.py
