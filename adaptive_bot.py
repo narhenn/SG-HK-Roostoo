@@ -154,8 +154,8 @@ def place_buy(pair, qty, price):
     if qty <= 0:
         return None
     log.info(f"BUY {pair}: qty={qty} @ ${price:,.4f}")
-    params = {"pair": pair, "side": "BUY", "type": "LIMIT",
-              "quantity": str(qty), "price": str(price)}
+    params = {"pair": pair, "side": "BUY", "type": "MARKET",
+              "quantity": str(qty)}
     resp = api_post("/v3/place_order", params)
     detail = resp.get("OrderDetail", resp)
     filled = float(detail.get("FilledQuantity", 0) or 0)
@@ -171,8 +171,8 @@ def place_sell(pair, qty, bid_price):
     if qty <= 0:
         return None
     log.info(f"SELL {pair}: qty={qty} @ ${price:,.4f}")
-    params = {"pair": pair, "side": "SELL", "type": "LIMIT",
-              "quantity": str(qty), "price": str(price)}
+    params = {"pair": pair, "side": "SELL", "type": "MARKET",
+              "quantity": str(qty)}
     resp = api_post("/v3/place_order", params)
     detail = resp.get("OrderDetail", resp)
     filled = float(detail.get("FilledQuantity", 0) or 0)

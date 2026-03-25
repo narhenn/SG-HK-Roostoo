@@ -146,12 +146,11 @@ def prec(pair):
 def place_buy(pair, qty, price):
     p = prec(pair)
     qty = round(qty, p["amount"])
-    price = round(price, p["price"])
     if qty <= 0:
         return None
-    log.info(f"BUY {pair}: qty={qty} @ ${price:,.2f}")
-    params = {"pair": pair, "side": "BUY", "type": "LIMIT",
-              "quantity": str(qty), "price": str(price)}
+    log.info(f"BUY {pair}: qty={qty} @ MARKET")
+    params = {"pair": pair, "side": "BUY", "type": "MARKET",
+              "quantity": str(qty)}
     resp = api_post("/v3/place_order", params)
     detail = resp.get("OrderDetail", resp)
     filled = float(detail.get("FilledQuantity", 0) or 0)
@@ -163,12 +162,11 @@ def place_buy(pair, qty, price):
 def place_sell(pair, qty, bid_price):
     p = prec(pair)
     qty = round(qty, p["amount"])
-    price = round(bid_price, p["price"])
     if qty <= 0:
         return None
-    log.info(f"SELL {pair}: qty={qty} @ ${price:,.2f}")
-    params = {"pair": pair, "side": "SELL", "type": "LIMIT",
-              "quantity": str(qty), "price": str(price)}
+    log.info(f"SELL {pair}: qty={qty} @ MARKET")
+    params = {"pair": pair, "side": "SELL", "type": "MARKET",
+              "quantity": str(qty)}
     resp = api_post("/v3/place_order", params)
     detail = resp.get("OrderDetail", resp)
     status = (detail.get("Status") or "").upper()
