@@ -64,6 +64,9 @@ SELL_ON_START = ["WIF/USD", "EDEN/USD", "S/USD"]
 LEGACY_TP = {
     "CAKE/USD": 0.05,   # +5%
     "AVAX/USD": 0.06,   # +6%
+    "LINK/USD": 0.05,   # +5% from $9.35 entry
+    "STO/USD": 0.05,    # +5%
+    "TUT/USD": 0.05,    # +5%
 }
 
 PRECISION = {
@@ -143,7 +146,7 @@ def get_wallet():
 def prec(pair):
     return PRECISION.get(pair, DEFAULT_PREC)
 
-def place_buy(pair, qty, price):
+def place_buy(pair, qty, price=0):
     p = prec(pair)
     qty = round(qty, p["amount"])
     if qty <= 0:
@@ -156,8 +159,8 @@ def place_buy(pair, qty, price):
     filled = float(detail.get("FilledQuantity", 0) or 0)
     fill_price = float(detail.get("FilledAverPrice", 0) or 0)
     status = (detail.get("Status") or "").upper()
-    log.info(f"  -> status={status} filled={filled} @ ${fill_price:,.2f}")
-    return {"status": status, "filled": filled, "fill_price": fill_price or price}
+    log.info(f"  -> status={status} filled={filled} @ ${fill_price:,.4f}")
+    return {"status": status, "filled": filled, "fill_price": fill_price}
 
 def place_sell(pair, qty, bid_price):
     p = prec(pair)
@@ -241,6 +244,16 @@ def swing_should_buy(state, prices):
     return False
 
 def swing_deploy(state, prices):
+    # Check if we have enough cash for swing deployment
+    try:
+        wallet = get_wallet()
+        cash = wallet.get("USD", 0)
+        needed = sum(SWING_ALLOC.values())
+        if cash < needed * 0.9:  # need at least 90% of target
+            log.info(f"Swing deploy skipped: cash ${cash:,.0f} < needed ${needed:,.0f}")
+            return
+    except Exception:
+        pass
     log.info("=" * 40 + " SWING DEPLOY " + "=" * 40)
     entries = {}
     for pair in SWING_PAIRS:
@@ -255,8 +268,8 @@ def swing_deploy(state, prices):
         qty = round(usd / buy_price, pr["amount"])
         if qty <= 0:
             continue
-        result = place_buy(pair, qty, buy_price)
-        if result and result["filled"] > 0:
+        result = place_buy(pair, qty)
+        if result and result["filled"] > 0 and result["fill_price"] > 0:
             ep = result["fill_price"]
             entries[pair] = {
                 "entry_price": ep, "qty": result["filled"],
@@ -384,8 +397,8 @@ def scanner_check_entries(state, prices, wallet):
         if qty <= 0:
             continue
         log.info(f"Scanner signal: {pair} change={change:.1%} size=${size:,.0f}")
-        result = place_buy(pair, qty, buy_price)
-        if result and result["filled"] > 0:
+        result = place_buy(pair, qty)
+        if result and result["filled"] > 0 and result["fill_price"] > 0:
             ep = result["fill_price"]
             actual_cost = ep * result["filled"]
             entries[pair] = {
