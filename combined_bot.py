@@ -251,8 +251,13 @@ def swing_deploy(state, prices):
             continue
         usd = SWING_ALLOC.get(pair, 200000)
         ask = p["ask"]
-        qty = usd / ask
-        result = place_buy(pair, qty, ask)
+        pr = prec(pair)
+        # Cross spread: buy at ask + 0.1% to ensure fill
+        buy_price = round(ask * 1.001, pr["price"])
+        qty = round(usd / buy_price, pr["amount"])
+        if qty <= 0:
+            continue
+        result = place_buy(pair, qty, buy_price)
         if result and result["filled"] > 0:
             ep = result["fill_price"]
             entries[pair] = {
@@ -268,14 +273,18 @@ def swing_deploy(state, prices):
 
 def swing_check_exits(state, prices, wallet):
     entries = state["swing"]["entries"]
-    to_remove = []
+    sold = []
     for pair, pos in entries.items():
         coin = pair.split("/")[0]
         held = wallet.get(coin, 0)
-        if held < pos["qty"] * 0.01:
-            log.info(f"Swing: {pair} no longer in wallet, removing")
-            to_remove.append(pair)
+
+        # If coin not in wallet, DON'T remove — it might be adopted as legacy
+        # Only remove if we explicitly sell it via TP or STOP
+        if held < pos.get("qty", 0) * 0.01:
+            # Coin disappeared without us selling — likely adopted as legacy
+            # Keep the entry so cycle doesn't falsely complete
             continue
+
         p = prices.get(pair, {})
         bid = p.get("bid", 0)
         last = p.get("last", 0)
@@ -293,11 +302,11 @@ def swing_check_exits(state, prices, wallet):
             state["swing"]["total_pnl"] += pnl
             send_telegram(f"SWING {reason} {pair}\nP&L: ${pnl:+,.0f}\nPrice: ${bid:,.2f}")
             log.info(f"Swing {reason} {pair}: P&L ${pnl:+,.0f}")
-            to_remove.append(pair)
-    for pair in to_remove:
+            sold.append(pair)
+    for pair in sold:
         entries.pop(pair, None)
-    # All positions closed -> back to WAITING
-    if state["swing"]["phase"] == "DEPLOYED" and len(entries) == 0:
+    # Only complete cycle if ALL entries were SOLD (not just disappeared)
+    if state["swing"]["phase"] == "DEPLOYED" and len(entries) == 0 and len(sold) > 0:
         state["swing"]["phase"] = "WAITING"
         state["swing"]["total_cycles"] += 1
         log.info(f"Swing cycle complete #{state['swing']['total_cycles']}, waiting for next dip")
