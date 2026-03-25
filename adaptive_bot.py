@@ -22,7 +22,7 @@ import hmac
 import hashlib
 import os
 import requests
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from collections import deque, defaultdict
 
 # ── Config ──
@@ -147,13 +147,12 @@ def get_wallet():
 def prec(pair):
     return PRECISION.get(pair, DEFAULT_PREC)
 
-def place_buy(pair, qty, price):
+def place_buy(pair, qty, price=0):
     p = prec(pair)
     qty = round(qty, p["amount"])
-    price = round(price * 1.001, p["price"])  # cross spread
     if qty <= 0:
         return None
-    log.info(f"BUY {pair}: qty={qty} @ ${price:,.4f}")
+    log.info(f"BUY {pair}: qty={qty} @ MARKET")
     params = {"pair": pair, "side": "BUY", "type": "MARKET",
               "quantity": str(qty)}
     resp = api_post("/v3/place_order", params)
@@ -162,15 +161,14 @@ def place_buy(pair, qty, price):
     fill_price = float(detail.get("FilledAverPrice", 0) or 0)
     status = (detail.get("Status") or "").upper()
     log.info(f"  -> status={status} filled={filled} @ ${fill_price:,.4f}")
-    return {"status": status, "filled": filled, "fill_price": fill_price or price}
+    return {"status": status, "filled": filled, "fill_price": fill_price}
 
 def place_sell(pair, qty, bid_price):
     p = prec(pair)
     qty = round(qty, p["amount"])
-    price = round(bid_price, p["price"])
     if qty <= 0:
         return None
-    log.info(f"SELL {pair}: qty={qty} @ ${price:,.4f}")
+    log.info(f"SELL {pair}: qty={qty} @ MARKET")
     params = {"pair": pair, "side": "SELL", "type": "MARKET",
               "quantity": str(qty)}
     resp = api_post("/v3/place_order", params)
@@ -314,7 +312,6 @@ def record_trade(state, pair, pnl):
     """Record trade for cooldown/count tracking."""
     state.setdefault("coin_trade_count", {})[pair] = state.get("coin_trade_count", {}).get(pair, 0) + 1
     if pnl < 0:
-        from datetime import timedelta
         cooldown_until = (datetime.utcnow() + timedelta(hours=COOLDOWN_AFTER_LOSS_H)).isoformat()
         state.setdefault("coin_cooldowns", {})[pair] = cooldown_until
         log.info(f"Cooldown {pair} for {COOLDOWN_AFTER_LOSS_H}h after loss")
@@ -341,7 +338,8 @@ def check_exits(state, prices, wallet):
         coin = pair.split("/")[0]
         held = wallet.get(coin, 0)
         if held <= 0:
-            to_close.append((pair, "NO_WALLET", 0))
+            # Don't remove — might be API lag or adopted elsewhere
+            # Only remove positions via actual TP/STOP/TIME sells
             continue
 
         current = p["last"]
@@ -410,8 +408,8 @@ def enter_bounces(state, prices, wallet, portfolio_value, price_history, regime)
         if qty <= 0:
             continue
 
-        result = place_buy(pair, qty, ask)
-        if result and result["filled"] > 0:
+        result = place_buy(pair, qty)
+        if result and result["filled"] > 0 and result["fill_price"] > 0:
             ep = result["fill_price"]
             stop = round(ep * (1 - stop_pct), pr["price"])
             tp = round(ep * (1 + tp_pct), pr["price"])
@@ -461,7 +459,7 @@ def close_all(wallet, prices):
 def main():
     log.info("=" * 50)
     log.info("ADAPTIVE BOT STARTING")
-    log.info("Modes: MOMENTUM / BOUNCE / SCALP")
+    log.info("Mode: BOUNCE-ONLY (regime-adaptive TP/Stop)")
     log.info("=" * 50)
     send_telegram("Adaptive bot started")
 
