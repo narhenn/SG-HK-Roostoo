@@ -45,8 +45,8 @@ SWING_ALLOC = {
     "XRP/USD": 140000,
 }
 SWING_TP = 0.05
-SWING_STOP = 0.04
-DIP_BUY_PCT = 0.02
+SWING_STOP = 0.025
+DIP_BUY_PCT = 0.025
 
 # ── Scanner params ──
 # Scans ALL coins on exchange except swing coins and excluded junk
