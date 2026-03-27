@@ -17,7 +17,7 @@ _alt_lock = threading.Lock()
 EXCLUDED_COINS = {'BONK/USD', 'DOGE/USD'}  # AmountPrecision=0 means whole units only
 
 # Scanner config
-MIN_MOMENTUM = 0.03      # 3% minimum — only strong movers (was 1%, bought everything)
+MIN_MOMENTUM = 0.1     # 3% minimum — only strong movers (was 1%, bought everything)
 MAX_ALT_POSITIONS = 6    # 6 concentrated positions (was 14, too scattered)
 MAX_ALT_EXPOSURE = 0.20  # 20% of portfolio ($200k) — Pran's recommendation
 ALT_TRAIL_MIN = 0.01     # Minimum trailing stop: 1% (tighter for laggard plays)
