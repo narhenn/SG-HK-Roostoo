@@ -45,8 +45,8 @@ SWING_ALLOC = {
     "XRP/USD": 140000,
 }
 SWING_TP = 0.05
-SWING_STOP = 0.025
-DIP_BUY_PCT = 0.025
+SWING_STOP = 0.04
+DIP_BUY_PCT = 0.02
 
 # ── Scanner params ──
 # Scans ALL coins on exchange except swing coins and excluded junk
@@ -61,8 +61,8 @@ SCANNER_STOP = 0.10             # wide stop — backtest showed alts always boun
 SCANNER_DIP_THRESH = -0.04      # -4% dip trigger (backtest winner: +$3,237, 86% WR)
 
 # ── Shared ──
-LEGACY_STOP_PCT = 0.07
-SELL_ON_START = ["WIF/USD", "EDEN/USD", "S/USD"]
+LEGACY_STOP_PCT = 0.025
+SELL_ON_START = ["WIF/USD", "EDEN/USD", "S/USD", "ETH/USD", "XRP/USD", "LINK/USD"]
 
 # Legacy TP overrides (coin -> TP multiplier)
 LEGACY_TP = {
