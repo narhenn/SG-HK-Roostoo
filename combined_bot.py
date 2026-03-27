@@ -30,6 +30,10 @@ STATE_FILE = "combined_state.json"
 CHECK_INTERVAL = 15
 CLOSE_ALL_TIME = datetime(2026, 3, 30, 20, 0, 0, tzinfo=timezone.utc)
 
+
+#sell on start to recover from losses
+SELL_ON_START = ["WIF/USD", "S/USD", "ETH/USD", "XRP/USD", "LINK/USD"]
+
 # ── Swing params ──
 # Match JuinStreet: 5 coins, equal weight ~$170k each, 80% deployed
 SWING_PAIRS = ["BTC/USD", "ETH/USD", "SOL/USD", "BNB/USD", "XRP/USD"]
