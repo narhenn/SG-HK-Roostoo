@@ -79,7 +79,7 @@ KELLY_FRACTION = 0.25              # Quarter-Kelly
 KELLY_MIN_POSITION = 0.02          # 2% minimum position
 KELLY_MAX_POSITION = 0.15          # 15% maximum position
 MAX_POSITION_PCT = 0.35            # Hard cap: 35% of capital
-MAX_LOSS_PER_TRADE = 0.010         # 1.0% max loss per trade (tighter for Calmar)
+MAX_LOSS_PER_TRADE = 0.015         # 1.5% max loss per trade
 RISK_PER_TRADE = 0.005             # 0.5% risk per trade
 MAX_OPEN_ORDERS = 3                # Max concurrent positions
 

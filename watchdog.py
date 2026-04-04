@@ -46,7 +46,7 @@ def is_bot_running():
     """Check if main.py is running as a process."""
     try:
         result = subprocess.run(
-            ["pgrep", "-f", "python3 main.py"],
+            ["pgrep", "-f", "python.*main\\.py"],
             capture_output=True, text=True
         )
         return result.returncode == 0

@@ -791,8 +791,8 @@ class AccumulationScanner(MomentumScanner):
                     }
                     self._save()
 
-                log.info("[AccumScan] BOUGHT %s: %s@$%.4f=$%.0f trail=%.1f%% tp=$%.4f" % (
-                    pair, fqty, fp, fqty*fp, TRAIL_PCT*100, fp*(1+TP_PCT)))
+                log.info("[AccumScan] BOUGHT %s: %s@$%.4f=$%.0f stop=%.1f%% hard" % (
+                    pair, fqty, fp, fqty*fp, HARD_STOP_PCT*100))
 
                 try:
                     from execution.alerts import send_alert

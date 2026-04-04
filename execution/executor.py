@@ -544,10 +544,9 @@ class TradeExecutor:
         except (ValueError, TypeError):
             return False
         pnl_pct = (current_price - entry_price) / entry_price if entry_price > 0 else 0.0
-        # Only time-exit if position is negative. If positive (even slightly),
+        # Time-exit if position is flat or negative. If positive (>0.2%),
         # let it run — trailing stop or TP will handle the exit.
-        # Mean reversion trades sometimes need >4hr to snap back.
-        return hours >= TIME_EXIT_HOURS and pnl_pct < 0.0
+        return hours >= TIME_EXIT_HOURS and pnl_pct < FLAT_THRESHOLD
 
     def start_stop_monitor(self, atr_14: float, regime: str):
         def _loop():

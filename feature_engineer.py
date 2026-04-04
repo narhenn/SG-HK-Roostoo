@@ -117,9 +117,13 @@ def calculate_features(df):
     # For training we use neutral placeholder values
     # Real values injected when bot runs live
     # ================================================
-    data['breadth'] = 0.5        # neutral placeholder (50% coins rising)
-    data['spread_proxy'] = 0.001  # neutral placeholder (0.1% spread)
-    print("Feature 9 & 10 done - Breadth + Spread (placeholders)")
+    # NOTE: breadth and spread_proxy were constant placeholders during training
+    # (0.5 and 0.001), meaning XGBoost learned zero signal from them.
+    # We still include them so the feature column order matches the saved model,
+    # but they add no predictive value. A retrain with real Roostoo data would fix this.
+    data['breadth'] = 0.5
+    data['spread_proxy'] = 0.001
+    print("Feature 9 & 10 done - Breadth + Spread (placeholders — no predictive value)")
 
     # ================================================
     # DROP ROWS WITH NaN (empty values)

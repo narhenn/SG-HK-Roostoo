@@ -4,10 +4,10 @@ import time
 
 def retrain():
     print("Retraining XGBoost model with latest data...")
-    subprocess.run(['python', 'data_fetcher.py'])
-    subprocess.run(['python', 'feature_engineer.py'])
-    subprocess.run(['python', 'label_creator.py'])
-    subprocess.run(['python', 'xgboost_trainer.py'])
+    subprocess.run(['python3', 'data_fetcher.py'])
+    subprocess.run(['python3', 'feature_engineer.py'])
+    subprocess.run(['python3', 'label_creator.py'])
+    subprocess.run(['python3', 'xgboost_trainer.py'])
     print("Retraining complete! New model saved.")
 
 # Retrain every 24 hours

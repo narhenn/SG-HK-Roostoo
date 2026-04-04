@@ -124,18 +124,29 @@ def macd(prices: list):
     if len(prices) < 26:
         return 0.0, 0.0, 0.0
 
-    ema_12 = exponential_moving_average(prices, 12)
-    ema_26 = exponential_moving_average(prices, 26)
+    if len(prices) < 26 + 9:
+        # Not enough data for signal line
+        ema_12 = exponential_moving_average(prices, 12)
+        ema_26 = exponential_moving_average(prices, 26)
+        macd_line = ema_12 - ema_26
+        return macd_line, 0.0, macd_line
 
-    macd_line = ema_12 - ema_26
+    # Calculate MACD line for each bar to build signal line from real EMA
+    macd_values = []
+    for i in range(26, len(prices) + 1):
+        ema_12 = exponential_moving_average(prices[:i], 12)
+        ema_26 = exponential_moving_average(prices[:i], 26)
+        macd_values.append(ema_12 - ema_26)
 
-    # Signal line is 9-period EMA of MACD values
-    # Simplified: use current MACD as approximation
-    # In production, you'd track historical MACD values
-    signal_line = macd_line * 0.8  # Approximation for simplicity
+    macd_line = macd_values[-1]
+
+    # Signal line: 9-period EMA of MACD values
+    signal_line = macd_values[0]
+    multiplier = 2 / (9 + 1)
+    for val in macd_values[1:]:
+        signal_line = (val - signal_line) * multiplier + signal_line
 
     histogram = macd_line - signal_line
-
     return macd_line, signal_line, histogram
 
 

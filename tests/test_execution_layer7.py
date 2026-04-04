@@ -112,9 +112,9 @@ def test_component3_time_exit_logic():
     _print_result("COMP3 TEST1", True, passed, passed)
     assert passed
 
-    # Price 80,040 > entry 80,000 → positive → should NOT time exit
+    # Price 80,200 > entry 80,000 → +0.25% profit > FLAT_THRESHOLD → should NOT time exit
     ex.state["exec_open_time"] = (datetime.now(timezone.utc) - timedelta(hours=9)).strftime("%Y-%m-%dT%H:%M:%S.%f")
-    passed = not ex._should_time_exit(80_000, 80_040)
+    passed = not ex._should_time_exit(80_000, 80_200)
     _print_result("COMP3 TEST2", False, not passed, passed)
     assert passed
 

@@ -37,7 +37,7 @@ except ImportError:
 BASE_URL = "https://mock-api.roostoo.com"
 STATE_FILE = "adaptive_state.json"
 CHECK_INTERVAL = 15
-CLOSE_ALL_TIME = datetime(2026, 3, 30, 20, 0, 0, tzinfo=timezone.utc)
+CLOSE_ALL_TIME = datetime(2026, 4, 14, 20, 0, 0, tzinfo=timezone.utc)
 
 # Coin tiers
 TIER1 = ["BTC/USD", "ETH/USD", "SOL/USD", "BNB/USD", "XRP/USD"]
@@ -301,8 +301,8 @@ def coin_eligible(state, pair):
     cd_until = state.get("coin_cooldowns", {}).get(pair, "")
     if cd_until:
         try:
-            cd_time = datetime.fromisoformat(cd_until.replace("Z", ""))
-            if datetime.utcnow() < cd_time:
+            cd_time = datetime.fromisoformat(cd_until.replace("Z", "+00:00"))
+            if datetime.now(timezone.utc) < cd_time:
                 return False
         except Exception:
             pass
@@ -362,8 +362,8 @@ def check_exits(state, prices, wallet):
             entry_time = pos.get("time", "")
             if entry_time:
                 try:
-                    et = datetime.fromisoformat(entry_time.replace("Z", ""))
-                    hours = (datetime.now(timezone.utc).replace(tzinfo=None) - et).total_seconds() / 3600
+                    et = datetime.fromisoformat(entry_time.replace("Z", "+00:00"))
+                    hours = (datetime.now(timezone.utc) - et).total_seconds() / 3600
                     if hours > TIME_STOP_HOURS and pnl_pct < 0.005:
                         reason = "TIME"
                 except Exception:

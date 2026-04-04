@@ -238,12 +238,8 @@ def build_html():
     }
 
     # Position info — show ALL coins held in wallet with full detail
-    all_ticker = {}
-    try:
-        all_ticker_raw = client.get_ticker()
-        all_ticker = all_ticker_raw.get('Data', {})
-    except Exception:
-        pass
+    # Reuse all_ticker_data fetched earlier (line 59) instead of redundant API call
+    all_ticker = all_ticker_data
 
     # Get entry prices from filled orders for each coin
     entry_prices = {}

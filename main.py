@@ -56,6 +56,7 @@ from execution.alerts import (
     send_alert,
 )
 from strategy.accumulation_scanner import AccumulationScanner
+from strategy.breakout_scanner import BreakoutScanner
 
 # ── Setup Logging ──
 os.makedirs(LOGS_DIR, exist_ok=True)
@@ -95,6 +96,7 @@ class TradingBot:
         self.last_daily_summary = 0
         self.last_heartbeat = 0
         self.alt_scanner = AccumulationScanner(self.client, self.state, save_state_fn=save_state)
+        self.breakout_scanner = BreakoutScanner(self.client, self.state, save_state_fn=save_state)
 
     def bootstrap(self):
         """Cold start: load historical data."""
@@ -247,7 +249,7 @@ class TradingBot:
         self.candles.add_tick(price, volume, bid, ask)
 
         # ── Competition end-date protection ──
-        competition_end = datetime(2026, 3, 31, 12, 0)  # 8pm SGT = 12pm UTC
+        competition_end = datetime(2026, 4, 14, 12, 0)  # Finals end: Apr 14 8pm SGT = 12pm UTC
         days_left = (competition_end - datetime.utcnow()).total_seconds() / 86400
         if days_left <= 1:
             # FINAL DAY: close ALL positions (BTC + alts)
@@ -275,10 +277,8 @@ class TradingBot:
             self.state['_competition_protect'] = True
             return
 
-        # BTC strategy paused — alt scanner handles trading
-        if not self.has_position():
-            log.info(f"Cycle {cycle}: BTC strategy paused. Alt scanner active. Price=${price:.2f}")
-            return
+        # BTC strategy active — run full 7-layer pipeline
+        # Alt scanner runs in parallel (separate thread)
 
         # ── Check halts ──
         if self.is_halted():
@@ -313,6 +313,8 @@ class TradingBot:
         )
 
         # ── Crash Detector: block buying during sustained crashes ──
+        # Check both candle pattern AND velocity (single-bar crash)
+        self.state['_crash_detected'] = False
         if len(df_1h_base) >= 4:
             last_4 = df_1h_base.tail(4)
             all_red = all(last_4['close'].values[i] < last_4['open'].values[i] for i in range(4))
@@ -320,13 +322,21 @@ class TradingBot:
             if all_red and total_drop < -0.015:
                 self.state['_crash_detected'] = True
                 log.info(f"Cycle {cycle}: CRASH DETECTED — 4 red candles, {total_drop:.2%} drop. Buys blocked (RSI<25 only).")
-            else:
-                self.state['_crash_detected'] = False
-        else:
-            self.state['_crash_detected'] = False
+        # Velocity check: single-bar >3% drop = flash crash
+        if len(df_1h_base) >= 2:
+            last_bar_drop = (df_1h_base['close'].iloc[-1] - df_1h_base['close'].iloc[-2]) / df_1h_base['close'].iloc[-2]
+            if last_bar_drop < -0.03:
+                self.state['_crash_detected'] = True
+                log.info(f"Cycle {cycle}: FLASH CRASH — {last_bar_drop:.2%} single-bar drop. Buys blocked.")
+        # 3-bar momentum check: >5% drop in 3 bars = sustained crash
+        if len(df_1h_base) >= 4:
+            drop_3bar = (df_1h_base['close'].iloc[-1] - df_1h_base['close'].iloc[-4]) / df_1h_base['close'].iloc[-4]
+            if drop_3bar < -0.05:
+                self.state['_crash_detected'] = True
+                log.info(f"Cycle {cycle}: SUSTAINED CRASH — {drop_3bar:.2%} in 3 bars. Buys blocked.")
 
         # ── Urgency detection: prevent score=0 from zero trades ──
-        competition_start = datetime(2026, 3, 21, 12, 0)  # 8pm SGT = 12pm UTC
+        competition_start = datetime(2026, 4, 4, 12, 0)  # Finals start: Apr 4 8pm SGT = 12pm UTC
         trade_count = len(self.state.get('trade_history', []))
         days_in = (datetime.utcnow() - competition_start).total_seconds() / 86400
         urgency = trade_count == 0 and days_in > URGENCY_DAYS
@@ -517,7 +527,7 @@ class TradingBot:
             trade_history=trade_history,
             regime=regime,
             timeframe_score=max(tf_result['score'], 1) if tf_result['pass'] else tf_result['score'],
-            signal_score=80,
+            signal_score=xgb_prob * 100 if xgb_prob > 0 else 80,
             atr_usd=atr_14,
             btc_price=price,
             current_position_open=self.has_position(),
@@ -659,10 +669,20 @@ class TradingBot:
         # Start alt monitor thread (checks exits every 1.5s)
         self.alt_scanner.start_alt_monitor()
 
+        # Start breakout scanner exit monitor (checks exits every 2s)
+        self.breakout_scanner.start_exit_monitor()
+        log.info("Breakout scanner started (15 positions, 25% sizing, 0.2% stop)")
+        send_alert("<b>BREAKOUT SCANNER ACTIVE</b>\n15 positions, 25% sizing, 67 coins")
+
         while self.running:
             try:
                 self.run_cycle()
-                # Alt coin scanner: only handles new entries (exits handled by monitor thread)
+                # Breakout scanner: primary strategy (entries every 60s, exits every 2s via thread)
+                try:
+                    self.breakout_scanner.run_cycle()
+                except Exception as e:
+                    log.error(f"Breakout scanner error: {e}")
+                # Alt coin scanner: secondary strategy
                 try:
                     self.alt_scanner.run_cycle()
                 except Exception as e:

@@ -28,11 +28,8 @@ except ImportError:
 BASE_URL = "https://mock-api.roostoo.com"
 STATE_FILE = "combined_state.json"
 CHECK_INTERVAL = 15
-CLOSE_ALL_TIME = datetime(2026, 3, 30, 20, 0, 0, tzinfo=timezone.utc)
+CLOSE_ALL_TIME = datetime(2026, 4, 14, 20, 0, 0, tzinfo=timezone.utc)
 
-
-#sell on start to recover from losses
-SELL_ON_START = ["WIF/USD", "S/USD", "ETH/USD", "XRP/USD", "LINK/USD"]
 
 # ── Swing params ──
 # Match JuinStreet: 5 coins, equal weight ~$170k each, 80% deployed
@@ -428,7 +425,7 @@ def scanner_check_exits(state, prices, wallet):
             from datetime import datetime, timezone
             try:
                 t = datetime.fromisoformat(pos["time"].replace("Z",""))
-                if (datetime.now(timezone.utc).replace(tzinfo=None) - t).total_seconds() > 120:
+                if (datetime.now(timezone.utc).replace(tzinfo=None) - t).total_seconds() > 1800:
                     to_remove.append(pair)
             except Exception:
                 to_remove.append(pair)

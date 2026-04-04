@@ -18,7 +18,7 @@ except ImportError:
 
 BASE_URL   = "https://mock-api.roostoo.com"
 STATE_FILE = "rotation_state.json"
-CLOSE_TIME = datetime(2026, 3, 30, 19, 0, 0, tzinfo=timezone.utc)
+CLOSE_TIME = datetime(2026, 4, 14, 19, 0, 0, tzinfo=timezone.utc)
 INTERVAL   = 20
 
 RATIO_WINDOW   = 60

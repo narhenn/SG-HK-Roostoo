@@ -216,7 +216,9 @@ class BacktestResult:
             axes[2].grid(True, alpha=0.3)
 
         plt.tight_layout()
-        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        save_dir = os.path.dirname(save_path)
+        if save_dir:
+            os.makedirs(save_dir, exist_ok=True)
         plt.savefig(save_path, dpi=150)
         plt.close()
         print(f"\nEquity curve saved to {save_path}")
@@ -332,7 +334,7 @@ def run_backtest(csv_path="data/btc_1h_90days.csv", initial_capital=50000,
                 if verbose:
                     print(f"  [{i}] STOP-LOSS @ ${current_price:.0f} | P&L: {pnl_pct:+.2%} (${pnl:+,.0f})")
                 position = None
-                cooldown_until = i + 60  # 1-hour cooldown (60 bars of 1-min, but we're on 1H so 1 bar)
+                cooldown_until = i + 1  # 1-hour cooldown (1 bar on 1H data)
                 continue
 
             # Check time-based exit (hold > 8 bars on 1H = 8 hours)

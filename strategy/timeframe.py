@@ -92,10 +92,18 @@ def check_timeframe(df_1h: pd.DataFrame, df_4h: pd.DataFrame,
             'scores': {'1h': score_1h, '4h': score_4h, 'daily': score_daily},
         }
 
-    # Sideways mean-reversion needs looser filter (1H bullish is enough)
-    min_score = TF_MIN_SCORE if regime != 'SIDEWAYS' else 1
+    # Sideways mean-reversion needs looser filter (neutral is enough)
+    # TRENDING needs at least +1 agreement (was +2, too strict in bear markets)
+    if regime == 'SIDEWAYS':
+        min_score = 0  # Allow mean-reversion even when TFs disagree
+    elif regime == 'TRENDING':
+        min_score = 1  # Loosened from 2 — bear markets rarely have all TFs aligned
+    else:
+        min_score = TF_MIN_SCORE
     if total >= 3:
         multiplier = 1.0
+    elif total >= 2:
+        multiplier = 0.75
     elif total >= min_score:
         multiplier = 0.5
     else:

@@ -20,7 +20,8 @@ def fetch_fear_greed() -> int:
         resp = requests.get('https://api.alternative.me/fng/?limit=1', timeout=10)
         data = resp.json()
         return int(data['data'][0]['value'])
-    except Exception:
+    except Exception as e:
+        log.warning(f"Fear & Greed API failed, using default 50: {e}")
         return 50
 
 
@@ -55,6 +56,7 @@ def fetch_funding_rate() -> float:
     except Exception:
         pass
 
+    log.warning("Funding rate API failed (both Binance and CoinGlass), using default 0.0")
     return 0.0
 
 
@@ -88,7 +90,8 @@ def fetch_market_breadth() -> float:
 
         return up / total
 
-    except Exception:
+    except Exception as e:
+        log.warning(f"Market breadth API failed, using default 0.5: {e}")
         return 0.5
 
 
