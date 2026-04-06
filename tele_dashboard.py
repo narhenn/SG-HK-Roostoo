@@ -150,7 +150,20 @@ def cmd_dashboard():
             e = "🟢" if pp >= 0 else "🔴"
             msg += f"\n   {e} {pair} ${cp:.4f} ({pp:+.2f}%) ${val:,.0f}"
 
-    if not v8_pos and not rsi_pos:
+    # BTC pump position
+    btc_pump = state.get('btc_pump', {})
+    if btc_pump.get('active'):
+        cp = float(all_ticker.get('BTC/USD', {}).get('LastPrice', 0))
+        entry = btc_pump.get('entry', 0)
+        pp = (cp - entry) / entry * 100 if entry > 0 else 0
+        val = btc_pump.get('qty', 0) * cp
+        stop = btc_pump.get('stop', 0)
+        e = "🟢" if pp >= 0 else "🔴"
+        msg += f"\n\n<b>🚀 BTC Pump Rider:</b>"
+        msg += f"\n   {e} BTC/USD ${cp:,.0f} ({pp:+.2f}%) ${val:,.0f}"
+        msg += f"\n      Stop: ${stop:,.0f} | Peak: ${btc_pump.get('peak',0):,.0f}"
+
+    if not v8_pos and not rsi_pos and not btc_pump.get('active'):
         msg += "\n\n💤 No positions — waiting for signals"
 
     if holdings:
