@@ -834,6 +834,41 @@ def main():
     state.setdefault("rsi_positions", {})
     state.setdefault("rsi_cooldowns", {})
     state.setdefault("btc_pump", {"active": False, "entry": 0, "qty": 0, "size": 0, "peak": 0, "stop": 0})
+
+    # Auto-adopt orphan wallet positions (survive restarts/state resets)
+    try:
+        prices = get_prices()
+        wallet = get_wallet()
+        tracked = set(state["positions"].keys()) | set(state.get("rsi_positions", {}).keys())
+        if state.get("btc_pump", {}).get("active"):
+            tracked.add("BTC/USD")
+        for coin, qty in wallet.items():
+            if coin == "USD" or qty <= 0.001:
+                continue
+            pair = f"{coin}/USD"
+            if pair in tracked or pair in EXCLUDED:
+                continue
+            p = prices.get(pair)
+            if not p or p["last"] <= 0:
+                continue
+            current = p["last"]
+            tp_pct, stop_pct = get_regime_params("VOLATILE")
+            state["positions"][pair] = {
+                "entry": current,
+                "qty": qty,
+                "stop": round(current * (1 - stop_pct), prec(pair)["price"]),
+                "tp": round(current * (1 + tp_pct), prec(pair)["price"]),
+                "mode": "VOLATILE",
+                "time": datetime.now(timezone.utc).isoformat(),
+                "size": qty * current,
+                "added": False, "stagger_done": False,
+                "peak": current, "remaining_pct": 1.0,
+            }
+            log.info(f"ADOPTED {pair}: {qty:.4f} @ ${current:.4f} stop=${current*(1-stop_pct):.4f} tp=${current*(1+tp_pct):.4f}")
+            send_telegram(f"Adopted orphan: {pair}\n{qty:.4f} @ ${current:.4f}\nStop: ${current*(1-stop_pct):.4f} | TP: ${current*(1+tp_pct):.4f}")
+    except Exception as e:
+        log.error(f"Adopt orphans failed: {e}")
+
     cycle = 0
 
     while True:
