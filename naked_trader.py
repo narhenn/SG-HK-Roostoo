@@ -505,8 +505,43 @@ def main():
         '<b>NAKED TRADER ONLINE</b>\n'
         'Pure price action — no indicators\n'
         f'8 patterns | Score >= {MIN_PATTERN_SCORE} to enter\n'
-        f'Exit on reversal pattern or {HARD_STOP_PCT*100:.0f}% stop'
+        f'Exit on reversal pattern or {HARD_STOP_PCT*100:.1f}% stop'
     )
+
+    # Bootstrap candle data from Binance (so we can trade immediately)
+    log.info('Bootstrapping candle data from Binance...')
+    COIN_TO_BINANCE = {
+        'BTC/USD':'BTCUSDT','ETH/USD':'ETHUSDT','SOL/USD':'SOLUSDT','BNB/USD':'BNBUSDT',
+        'XRP/USD':'XRPUSDT','AVAX/USD':'AVAXUSDT','LINK/USD':'LINKUSDT','FET/USD':'FETUSDT',
+        'TAO/USD':'TAOUSDT','APT/USD':'APTUSDT','SUI/USD':'SUIUSDT','NEAR/USD':'NEARUSDT',
+        'WIF/USD':'WIFUSDT','PENDLE/USD':'PENDLEUSDT','ADA/USD':'ADAUSDT','DOT/USD':'DOTUSDT',
+        'UNI/USD':'UNIUSDT','HBAR/USD':'HBARUSDT','ARB/USD':'ARBUSDT','EIGEN/USD':'EIGENUSDT',
+        'ENA/USD':'ENAUSDT','CAKE/USD':'CAKEUSDT','CFX/USD':'CFXUSDT','CRV/USD':'CRVUSDT',
+        'FIL/USD':'FILUSDT','FORM/USD':'FORMUSDT','VIRTUAL/USD':'VIRTUALUSDT',
+        'TRUMP/USD':'TRUMPUSDT','ONDO/USD':'ONDOUSDT','WLD/USD':'WLDUSDT',
+        'AAVE/USD':'AAVEUSDT','ICP/USD':'ICPUSDT','LTC/USD':'LTCUSDT','XLM/USD':'XLMUSDT',
+        'TON/USD':'TONUSDT','TRX/USD':'TRXUSDT','SEI/USD':'SEIUSDT','DOGE/USD':'DOGEUSDT',
+    }
+    bootstrapped = 0
+    for pair, symbol in COIN_TO_BINANCE.items():
+        if pair in EXCLUDED:
+            continue
+        try:
+            url = f'https://api.binance.com/api/v3/klines?symbol={symbol}&interval=1h&limit=50'
+            r = requests.get(url, timeout=5)
+            data = r.json()
+            if isinstance(data, list) and len(data) > 10:
+                candles[pair] = deque(maxlen=200)
+                for k in data[:-1]:  # skip current incomplete candle
+                    candles[pair].append({
+                        'o': float(k[1]), 'h': float(k[2]), 'l': float(k[3]),
+                        'c': float(k[4]), 'v': float(k[5]), 't': int(k[0]) / 1000,
+                    })
+                bootstrapped += 1
+        except:
+            pass
+        time.sleep(0.1)
+    log.info(f'Bootstrapped {bootstrapped} coins with ~50 hourly candles each — ready to trade')
 
     import fcntl, sys
     lock = open('/tmp/naked_trader.lock', 'w')
