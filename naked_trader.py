@@ -99,7 +99,8 @@ def update_candles(td):
 
         if pair not in tick_buffer:
             tick_buffer[pair] = []
-            candles[pair] = deque(maxlen=100)
+            if pair not in candles:  # don't overwrite bootstrapped candles
+                candles[pair] = deque(maxlen=100)
 
         tick_buffer[pair].append({'t': now, 'p': px, 'b': bid, 'a': ask, 'v': vol})
 

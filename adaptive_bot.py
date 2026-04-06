@@ -849,6 +849,10 @@ def main():
                 return
 
             prices = get_prices()
+            if not prices:
+                log.warning("get_prices() returned empty — retrying in 10s")
+                time.sleep(10)
+                continue
             wallet = get_wallet()
             portfolio = calc_portfolio_value(wallet, prices)
 
@@ -1009,7 +1013,7 @@ def main():
             # Logging
             cycle += 1
             state["_cycle"] = cycle
-            if cycle % 20 == 0:  # every ~5 min
+            if cycle <= 5 or cycle % 20 == 0:  # first 5 cycles + every ~5 min
                 n_v8 = len(state["positions"])
                 n_rsi = len(state.get("rsi_positions", {}))
                 tp_pct, stop_pct = get_regime_params(regime)
