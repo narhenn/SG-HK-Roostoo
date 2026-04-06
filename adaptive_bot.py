@@ -115,8 +115,8 @@ MAX_POSITIONS = 3          # max 3 positions at once
 # ── Capital split: V8 (70%) + RSI (30%) — base sizes, adjusted by vol ──
 V8_CAPITAL_PCT = 0.70      # 70% of portfolio for V8 bounce
 RSI_CAPITAL_PCT = 0.30     # 30% for RSI oversold
-V8_POS_SIZE_PCT = 0.233    # V8: ~23.3% per position (70% / 3 slots) — base
-RSI_POS_SIZE_PCT = 0.05    # RSI: 5% per position (smaller, more trades) — was 10%, too big with vol_scale
+V8_POS_SIZE_PCT = 0.30     # V8: 30% per position (no RSI = more capital for V8)
+RSI_POS_SIZE_PCT = 0.00    # RSI DISABLED — fees eat all profit (327 trades × 0.05% = $32k in fees alone)
 VOL_ADJ_ATR_PERIOD = 14    # ATR lookback for volatility measurement
 VOL_ADJ_BASELINE = 1.5     # "normal" ATR as % of price — sizes scale inversely
 VOL_ADJ_MIN_SCALE = 0.50   # minimum size multiplier — was 0.30
