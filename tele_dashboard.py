@@ -16,7 +16,7 @@ except:
 from roostoo_client import RoostooClient
 
 client = RoostooClient()
-STARTING_CAPITAL = 1000000
+STARTING_CAPITAL = 952399  # finals starting balance
 AUTO_INTERVAL = 600  # auto update every 10 min
 POLL_INTERVAL = 2    # check for commands every 2 sec
 last_update_id = 0

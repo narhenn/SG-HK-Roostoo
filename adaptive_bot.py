@@ -72,8 +72,27 @@ PRECISION = {
     "SOL/USD": {"price": 2, "amount": 3},
     "BNB/USD": {"price": 2, "amount": 3},
     "XRP/USD": {"price": 4, "amount": 1},
+    "VIRTUAL/USD": {"price": 4, "amount": 1},
+    "FET/USD": {"price": 4, "amount": 1},
+    "PENDLE/USD": {"price": 3, "amount": 1},
+    "TAO/USD": {"price": 1, "amount": 4},
+    "TRUMP/USD": {"price": 3, "amount": 3},
+    "WIF/USD": {"price": 3, "amount": 2},
+    "ARB/USD": {"price": 4, "amount": 1},
+    "SUI/USD": {"price": 4, "amount": 1},
+    "WLD/USD": {"price": 4, "amount": 1},
+    "ENA/USD": {"price": 4, "amount": 2},
+    "EIGEN/USD": {"price": 3, "amount": 2},
+    "CRV/USD": {"price": 4, "amount": 1},
+    "UNI/USD": {"price": 3, "amount": 2},
+    "APT/USD": {"price": 3, "amount": 2},
+    "FORM/USD": {"price": 4, "amount": 1},
+    "ONDO/USD": {"price": 4, "amount": 1},
+    "CFX/USD": {"price": 5, "amount": 0},
+    "CAKE/USD": {"price": 3, "amount": 2},
+    "FIL/USD": {"price": 3, "amount": 2},
 }
-DEFAULT_PREC = {"price": 4, "amount": 2}
+DEFAULT_PREC = {"price": 4, "amount": 1}  # default to 1 decimal (safer)
 
 # ── Regime thresholds (optimized: breadth 50/80 → Sharpe 1.09) ──
 VOLATILE_LOW = 0.50    # breadth <50% = volatile (crash/fear)
