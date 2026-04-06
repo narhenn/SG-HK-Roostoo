@@ -153,12 +153,16 @@ MAX_TRADES_PER_COIN = 50      # effectively unlimited (was 3 — ran out of coin
 COOLDOWN_AFTER_LOSS_H = 4     # 4h cooldown after getting stopped (was 12h — too restrictive)
 
 # ── Logging ──
-os.makedirs("logs", exist_ok=True)
+try:
+    os.makedirs("logs", exist_ok=True)
+    _log_file = "logs/adaptive_bot.log"
+except:
+    _log_file = "adaptive_bot.log"
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[
-        logging.FileHandler("logs/adaptive_bot.log"),
+        logging.FileHandler(_log_file),
         logging.StreamHandler(),
     ]
 )
@@ -263,14 +267,17 @@ def place_sell(pair, qty, bid_price):
 def send_telegram(msg):
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
         return
-    try:
-        requests.post(
-            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
-            data={"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "HTML"},
-            timeout=5,
-        )
-    except Exception:
-        pass
+    import threading
+    def _send():
+        try:
+            requests.post(
+                f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
+                data={"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "HTML"},
+                timeout=3,
+            )
+        except:
+            pass
+    threading.Thread(target=_send, daemon=True).start()
 
 # ── State ──
 def load_state():
