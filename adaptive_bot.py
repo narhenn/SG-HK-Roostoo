@@ -116,11 +116,11 @@ MAX_POSITIONS = 3          # max 3 positions at once
 V8_CAPITAL_PCT = 0.70      # 70% of portfolio for V8 bounce
 RSI_CAPITAL_PCT = 0.30     # 30% for RSI oversold
 V8_POS_SIZE_PCT = 0.233    # V8: ~23.3% per position (70% / 3 slots) — base
-RSI_POS_SIZE_PCT = 0.10    # RSI: 10% per position (30% / 3 slots) — base
+RSI_POS_SIZE_PCT = 0.05    # RSI: 5% per position (smaller, more trades) — was 10%, too big with vol_scale
 VOL_ADJ_ATR_PERIOD = 14    # ATR lookback for volatility measurement
 VOL_ADJ_BASELINE = 1.5     # "normal" ATR as % of price — sizes scale inversely
-VOL_ADJ_MIN_SCALE = 0.30   # minimum size multiplier (don't go below 30%)
-VOL_ADJ_MAX_SCALE = 2.0    # maximum size multiplier (don't go above 200%)
+VOL_ADJ_MIN_SCALE = 0.50   # minimum size multiplier — was 0.30
+VOL_ADJ_MAX_SCALE = 1.5    # maximum size multiplier — was 2.0, caused $190k RSI trades
 
 # ── BTC Pump Rider (v11) ──
 BTC_PUMP_ENABLED = True        # ride BTC when market pumps
@@ -132,10 +132,11 @@ BTC_PUMP_EXIT_BREADTH = 0.50   # sell if breadth drops below 50%
 # ── RSI strategy params ──
 RSI_PERIOD = 7             # fast RSI
 RSI_OVERSOLD = 25          # buy when RSI < 25
-RSI_EXIT = 50              # sell when RSI crosses above 50
+RSI_EXIT = 55              # sell when RSI crosses above 55 (was 50, exited too fast on tick noise)
 RSI_TP = 0.02              # +2% take profit
 RSI_STOP = 0.01            # -1% stop
 RSI_MAX_HOLD = 8           # 8 bar max hold (8 hours)
+RSI_MIN_HOLD_TICKS = 16    # hold at least 16 ticks (~4 min) before RSI exit (prevent instant flip)
 RSI_MAX_POSITIONS = 3      # max 3 RSI positions
 RSI_COOLDOWN_BARS = 2      # shorter cooldown for RSI
 DIP_THRESHOLD = 0.03       # coin must have dipped 3%+ from recent high (confirmed optimal)
@@ -218,9 +219,15 @@ def get_wallet():
 def prec(pair):
     return PRECISION.get(pair, DEFAULT_PREC)
 
+def _floor_qty(qty, decimals):
+    """Truncate qty to N decimal places (exchanges reject rounded-up quantities)."""
+    import math
+    mult = 10 ** decimals
+    return math.floor(qty * mult) / mult
+
 def place_buy(pair, qty, price=0):
     p = prec(pair)
-    qty = round(qty, p["amount"])
+    qty = _floor_qty(qty, p["amount"])
     if qty <= 0:
         return None
     log.info(f"BUY {pair}: qty={qty} @ MARKET")
@@ -239,7 +246,7 @@ def place_buy(pair, qty, price=0):
 
 def place_sell(pair, qty, bid_price):
     p = prec(pair)
-    qty = round(qty, p["amount"])
+    qty = _floor_qty(qty, p["amount"])
     if qty <= 0:
         return None
     log.info(f"SELL {pair}: qty={qty} @ MARKET")
@@ -729,15 +736,17 @@ def check_rsi_exits(state, prices, wallet, price_history):
         elif pos.get("tp") and current >= pos["tp"]:
             reason = "RSI_TP"
         else:
-            # RSI exit: sell when RSI crosses above 50
-            hist = price_history.get(pair, [])
-            if len(hist) >= RSI_PERIOD + 1:
-                rsi = calc_rsi(hist, RSI_PERIOD)
-                if rsi > RSI_EXIT:
-                    reason = "RSI_50"
+            bars_held = state.get("_cycle", 0) - pos.get("bar", 0)
+
+            # RSI exit: sell when RSI crosses above 55 (only after min hold)
+            if bars_held >= RSI_MIN_HOLD_TICKS:
+                hist = price_history.get(pair, [])
+                if len(hist) >= RSI_PERIOD + 1:
+                    rsi = calc_rsi(hist, RSI_PERIOD)
+                    if rsi > RSI_EXIT:
+                        reason = "RSI_55"
 
             # Max hold
-            bars_held = state.get("_cycle", 0) - pos.get("bar", 0)
             if bars_held >= RSI_MAX_HOLD * (60 // CHECK_INTERVAL) and pnl_pct < 0.005:
                 reason = "RSI_TIME"
 
