@@ -262,12 +262,47 @@ def cmd_positions():
     return msg
 
 
+def cmd_trades():
+    """Recent trades — /t"""
+    state = get_state()
+    trade_log = state.get('trade_log', [])
+
+    if not trade_log:
+        return "📜 No trades yet — bot hasn't traded"
+
+    # Stats
+    wins = [t for t in trade_log if t['pnl'] > 0]
+    losses = [t for t in trade_log if t['pnl'] <= 0]
+    total_pnl = sum(t['pnl'] for t in trade_log)
+    wr = len(wins) / len(trade_log) * 100 if trade_log else 0
+
+    msg = f"""<b>📜 Recent Trades</b> ({len(trade_log)} total)
+━━━━━━━━━━━━━━━━━━
+WR: <b>{wr:.0f}%</b> ({len(wins)}W / {len(losses)}L)
+Total P&L: <b>${total_pnl:+,.0f}</b>
+"""
+
+    # Last 15 trades (newest first)
+    for t in reversed(trade_log[-15:]):
+        e = "🟢" if t['pnl'] > 0 else "🔴"
+        typ = t.get('type', '?')
+        badge = "V8" if typ == "V8" else "RSI"
+        msg += f"\n{e} [{badge}] {t['pair']} ${t['pnl']:+,.0f} {t['reason']} {t['time']}"
+
+    if len(trade_log) > 15:
+        msg += f"\n\n<i>Showing last 15 of {len(trade_log)}</i>"
+
+    msg += f"\n\n<i>/d /m /p /t /h</i>"
+    return msg
+
+
 def cmd_help():
     return """<b>📖 Commands</b>
 ━━━━━━━━━━━━━━━━━━
 /d — Full dashboard (portfolio + positions + market)
 /m — Market overview (top gainers/losers, breadth)
 /p — Detailed positions (entry, stop, TP, P&L)
+/t — Recent trades (last 15 with P&L)
 /h — This help message
 
 Auto updates every 10 minutes.
@@ -300,6 +335,8 @@ def poll_commands():
                     send_tg(cmd_market())
                 elif text in ["/p", "/positions", "/pos", "p"]:
                     send_tg(cmd_positions())
+                elif text in ["/t", "/trades", "t"]:
+                    send_tg(cmd_trades())
                 elif text in ["/h", "/help", "h", "/start"]:
                     send_tg(cmd_help())
 

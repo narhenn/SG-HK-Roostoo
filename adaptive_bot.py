@@ -373,13 +373,22 @@ def coin_eligible(state, pair):
             pass
     return True
 
-def record_trade(state, pair, pnl):
-    """Record trade for cooldown/count tracking."""
+def record_trade(state, pair, pnl, reason="?"):
+    """Record trade for cooldown/count tracking + trade log."""
     state.setdefault("coin_trade_count", {})[pair] = state.get("coin_trade_count", {}).get(pair, 0) + 1
     if pnl < 0:
         cooldown_until = (datetime.now(timezone.utc) + timedelta(hours=COOLDOWN_AFTER_LOSS_H)).isoformat()
         state.setdefault("coin_cooldowns", {})[pair] = cooldown_until
         log.info(f"Cooldown {pair} for {COOLDOWN_AFTER_LOSS_H}h after loss")
+
+    # Trade log (keep last 50)
+    trade_log = state.get("trade_log", [])
+    trade_log.append({
+        "pair": pair, "pnl": round(pnl, 2), "reason": reason,
+        "time": datetime.now(timezone.utc).strftime("%m/%d %H:%M"),
+        "type": "V8",
+    })
+    state["trade_log"] = trade_log[-50:]
 
 def open_position(state, pair, price, qty, regime, stop, tp):
     state["positions"][pair] = {
@@ -464,7 +473,7 @@ def check_exits(state, prices, wallet):
 
     for pair, reason, pnl in to_close:
         state["positions"].pop(pair, None)
-        record_trade(state, pair, pnl)
+        record_trade(state, pair, pnl, reason)
         log.info(f"Closed {pair}: {reason} P&L=${pnl:+,.0f}")
 
         # v6: Track consecutive stops for pause logic
@@ -719,6 +728,14 @@ def check_rsi_exits(state, prices, wallet, price_history):
         rsi_positions.pop(pair, None)
         if pnl < 0:
             state.setdefault("rsi_cooldowns", {})[pair] = state.get("_cycle", 0) + RSI_COOLDOWN_BARS * (60 // CHECK_INTERVAL)
+        # Log RSI trade
+        trade_log = state.get("trade_log", [])
+        trade_log.append({
+            "pair": pair, "pnl": round(pnl, 2), "reason": reason,
+            "time": datetime.now(timezone.utc).strftime("%m/%d %H:%M"),
+            "type": "RSI",
+        })
+        state["trade_log"] = trade_log[-50:]
 
     state["rsi_positions"] = rsi_positions
 
