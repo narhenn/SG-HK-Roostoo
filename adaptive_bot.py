@@ -230,23 +230,9 @@ def place_buy(pair, qty, price=0):
     qty = _floor_qty(qty, p["amount"])
     if qty <= 0:
         return None
-    # Use LIMIT at ask price (0.05% fee vs 0.1% market = saves 50% on fees)
-    if price <= 0:
-        # Fetch current ask
-        try:
-            ticker = api_get("/v3/ticker").get("Data", {}).get(pair, {})
-            price = float(ticker.get("MinAsk", 0))
-        except:
-            price = 0
-    if price > 0:
-        price = round(price * 1.001, p["price"])  # slightly above ask to ensure fill
-        log.info(f"BUY {pair}: qty={qty} @ LIMIT ${price}")
-        params = {"pair": pair, "side": "BUY", "type": "LIMIT",
-                  "quantity": str(qty), "price": str(price)}
-    else:
-        log.info(f"BUY {pair}: qty={qty} @ MARKET")
-        params = {"pair": pair, "side": "BUY", "type": "MARKET",
-                  "quantity": str(qty)}
+    log.info(f"BUY {pair}: qty={qty} @ MARKET")
+    params = {"pair": pair, "side": "BUY", "type": "MARKET",
+              "quantity": str(qty)}
     resp = api_post("/v3/place_order", params)
     if not resp.get("Success", False):
         log.error(f"BUY {pair} REJECTED: {resp.get('ErrMsg', 'unknown')}")
@@ -263,16 +249,9 @@ def place_sell(pair, qty, bid_price):
     qty = _floor_qty(qty, p["amount"])
     if qty <= 0:
         return None
-    # Use LIMIT at bid price (0.05% fee vs 0.1% market)
-    if bid_price > 0:
-        price = round(bid_price * 0.999, p["price"])  # slightly below bid to ensure fill
-        log.info(f"SELL {pair}: qty={qty} @ LIMIT ${price}")
-        params = {"pair": pair, "side": "SELL", "type": "LIMIT",
-                  "quantity": str(qty), "price": str(price)}
-    else:
-        log.info(f"SELL {pair}: qty={qty} @ MARKET")
-        params = {"pair": pair, "side": "SELL", "type": "MARKET",
-                  "quantity": str(qty)}
+    log.info(f"SELL {pair}: qty={qty} @ MARKET")
+    params = {"pair": pair, "side": "SELL", "type": "MARKET",
+              "quantity": str(qty)}
     resp = api_post("/v3/place_order", params)
     if not resp.get("Success", False):
         log.error(f"SELL {pair} REJECTED: {resp.get('ErrMsg', 'unknown')}")
