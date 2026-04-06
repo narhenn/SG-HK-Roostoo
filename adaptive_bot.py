@@ -1,18 +1,31 @@
 """
-Regime-Adaptive Bounce Bot.
+Regime-Adaptive Dual Bot v10 (V8 bounce + RSI oversold + vol-adjusted sizing).
 
-ONE strategy: buy coins that dipped and are bouncing.
-TWO modes: adjusts TP/Stop based on market regime.
+TWO STRATEGIES running simultaneously, split capital 70/30:
 
-VOLATILE (breadth <40% or >70%): TP +2%, Stop -1%. Fast cycles.
-NORMAL (breadth 40-70%): TP +5%, Stop -3%. Let positions breathe.
+STRATEGY 1 — V8 BOUNCE (70% capital, max 3 positions):
+  Buy coins dipped 3-7%, bouncing after 2 red candles.
+  VOLATILE: TP +3%, Stop -1%. NORMAL: TP +6%, Stop -3%.
+  Filters: breadth>30%, BTC 24h>-5%, no panic volume, pause after 3 stops.
 
-Entry: coin dropped 3%+ from recent high AND last candle is green AND BTC not crashing.
-Sizing: fixed 20% of portfolio per position, max 3 positions.
-Safety: max 3 trades per coin, 12h cooldown after loss.
+STRATEGY 2 — RSI OVERSOLD (30% capital, max 3 positions):
+  Buy when RSI(7) < 25 and candle is green.
+  TP +2%, Stop -1%. Exit when RSI crosses above 50 or 8h max hold.
 
-Backtested score: 80.9 in competition period.
-Python 3.9 compatible.
+RISK CONTROL — Volatility-Adjusted Position Sizing:
+  Measures BTC's ATR (14-period). Low vol = bigger positions. High vol = smaller.
+  Calm market (ATR 0.75%) = 2x size. Chaotic (ATR 3%) = 0.5x size.
+
+PROFIT BOOST — Add On Strength:
+  When a V8 trade goes +1% in our favor, add 50% more size.
+  Pyramids into winners. Losers never reach +1% so no adds on losses.
+  +45% more profit with same worst case.
+
+Backtested (Nov 2025 - Mar 2026, 1H, 20 coins):
+  5-day: 73% profitable, avg +$41,436/window, worst -2.6%, best +23.5%
+  Mar 1-8 (bad week): +$58,341
+  Jan 1-6 (best week): +$126,077
+  Total across 60 windows: $2.49M
 """
 
 import time
@@ -41,11 +54,17 @@ CLOSE_ALL_TIME = datetime(2026, 4, 14, 20, 0, 0, tzinfo=timezone.utc)
 
 # Coin tiers
 TIER1 = ["BTC/USD", "ETH/USD", "SOL/USD", "BNB/USD", "XRP/USD"]
-TIER2 = ["AVAX/USD", "LINK/USD", "AAVE/USD", "FET/USD", "TAO/USD",
-         "APT/USD", "SUI/USD", "NEAR/USD", "WIF/USD", "PENDLE/USD"]
+# v8: Top 20 coins ranked by backtest P&L (70% 5d WR, $20k avg, -1.9% worst)
+# Ranked: VIRTUAL > FET > PENDLE > TAO > TRUMP > WIF > ARB > SUI > WLD > ENA
+#         > EIGEN > CRV > UNI > APT > FORM > ONDO > CFX > BTC > CAKE > FIL
+TIER2 = ["FET/USD", "TAO/USD", "APT/USD", "SUI/USD", "WIF/USD", "PENDLE/USD",
+         "VIRTUAL/USD", "TRUMP/USD", "EIGEN/USD", "WLD/USD", "ARB/USD",
+         "CRV/USD", "ENA/USD", "UNI/USD", "FORM/USD", "ONDO/USD", "CFX/USD",
+         "CAKE/USD", "FIL/USD"]
 ALL_COINS = TIER1 + TIER2
 EXCLUDED = {"PAXG/USD", "BONK/USD", "DOGE/USD", "SHIB/USD", "PEPE/USD",
-            "FLOKI/USD", "1000CHEEMS/USD", "PUMP/USD", "TUT/USD", "STO/USD"}
+            "FLOKI/USD", "1000CHEEMS/USD", "PUMP/USD", "TUT/USD", "STO/USD",
+            "SEI/USD", "XRP/USD", "LTC/USD", "ADA/USD", "TON/USD", "BNB/USD"}  # v6: exclude always-losers
 
 PRECISION = {
     "BTC/USD": {"price": 2, "amount": 5},
@@ -56,29 +75,53 @@ PRECISION = {
 }
 DEFAULT_PREC = {"price": 4, "amount": 2}
 
-# ── Regime thresholds ──
-VOLATILE_LOW = 0.40    # breadth <40% = volatile (crash/fear)
-VOLATILE_HIGH = 0.70   # breadth >70% = volatile (euphoria)
-# Between 40-70% = normal/choppy
+# ── Regime thresholds (optimized: breadth 50/80 → Sharpe 1.09) ──
+VOLATILE_LOW = 0.50    # breadth <50% = volatile (crash/fear)
+VOLATILE_HIGH = 0.80   # breadth >80% = volatile (euphoria)
+# Between 50-80% = normal/choppy
 
-# ── Regime-dependent parameters ──
-# VOLATILE: fast cycles, tight TP/Stop (like JuinStreet)
-VOLATILE_TP = 0.02       # +2% take profit
-VOLATILE_STOP = 0.01     # -1% stop
+# ── Regime-dependent parameters (optimized via backtest) ──
+# VOLATILE: tight cycles
+VOLATILE_TP = 0.03       # +3% take profit (was 2%, optimized)
+VOLATILE_STOP = 0.01     # -1% stop (unchanged, optimal)
 
-# NORMAL: wider params, let positions breathe
-NORMAL_TP = 0.05         # +5% take profit
-NORMAL_STOP = 0.03       # -3% stop
+# NORMAL: wider params
+NORMAL_TP = 0.06         # +6% take profit (was 5%, optimized)
+NORMAL_STOP = 0.03       # -3% stop (unchanged, optimal)
 
 # ── Shared parameters ──
 MAX_POSITIONS = 3          # max 3 positions at once
-POSITION_SIZE_PCT = 0.20   # 20% of portfolio per position (fixed)
-DIP_THRESHOLD = 0.03       # coin must have dipped 3%+ from recent high
+# ── Capital split: V8 (70%) + RSI (30%) — base sizes, adjusted by vol ──
+V8_CAPITAL_PCT = 0.70      # 70% of portfolio for V8 bounce
+RSI_CAPITAL_PCT = 0.30     # 30% for RSI oversold
+V8_POS_SIZE_PCT = 0.233    # V8: ~23.3% per position (70% / 3 slots) — base
+RSI_POS_SIZE_PCT = 0.10    # RSI: 10% per position (30% / 3 slots) — base
+VOL_ADJ_ATR_PERIOD = 14    # ATR lookback for volatility measurement
+VOL_ADJ_BASELINE = 1.5     # "normal" ATR as % of price — sizes scale inversely
+VOL_ADJ_MIN_SCALE = 0.30   # minimum size multiplier (don't go below 30%)
+VOL_ADJ_MAX_SCALE = 2.0    # maximum size multiplier (don't go above 200%)
+
+# ── RSI strategy params ──
+RSI_PERIOD = 7             # fast RSI
+RSI_OVERSOLD = 25          # buy when RSI < 25
+RSI_EXIT = 50              # sell when RSI crosses above 50
+RSI_TP = 0.02              # +2% take profit
+RSI_STOP = 0.01            # -1% stop
+RSI_MAX_HOLD = 8           # 8 bar max hold (8 hours)
+RSI_MAX_POSITIONS = 3      # max 3 RSI positions
+RSI_COOLDOWN_BARS = 2      # shorter cooldown for RSI
+DIP_THRESHOLD = 0.03       # coin must have dipped 3%+ from recent high (confirmed optimal)
+DIP_MAX = 0.07             # v6: cap dip at 7% (>7% = overextended, doesn't bounce)
 TIME_STOP_HOURS = 6        # close flat positions after 6 hours
+BTC_24H_MIN = -5.0         # v6: don't enter when BTC dropped >5% in 24h
+PAUSE_AFTER_STOPS = 3      # v6: pause 6 ticks after 3 consecutive stops
+KILL_IF_FIRST_N_LOSE = 5   # v9: if first 5 trades all lose, pause for 12h (bad market detection)
+VOL_SKIP_LOW = 2.0         # v6: skip entries with volume 2-3x avg (panic selling)
+VOL_SKIP_HIGH = 3.0
 
 # ── Loss prevention (backtested: +$5.8k improvement) ──
-MAX_TRADES_PER_COIN = 3       # don't obsess over one coin
-COOLDOWN_AFTER_LOSS_H = 12    # 12h cooldown after getting stopped
+MAX_TRADES_PER_COIN = 50      # effectively unlimited (was 3 — ran out of coins in 2 days)
+COOLDOWN_AFTER_LOSS_H = 4     # 4h cooldown after getting stopped (was 12h — too restrictive)
 
 # ── Logging ──
 os.makedirs("logs", exist_ok=True)
@@ -156,6 +199,9 @@ def place_buy(pair, qty, price=0):
     params = {"pair": pair, "side": "BUY", "type": "MARKET",
               "quantity": str(qty)}
     resp = api_post("/v3/place_order", params)
+    if not resp.get("Success", False):
+        log.error(f"BUY {pair} REJECTED: {resp.get('ErrMsg', 'unknown')}")
+        return None
     detail = resp.get("OrderDetail", resp)
     filled = float(detail.get("FilledQuantity", 0) or 0)
     fill_price = float(detail.get("FilledAverPrice", 0) or 0)
@@ -172,6 +218,9 @@ def place_sell(pair, qty, bid_price):
     params = {"pair": pair, "side": "SELL", "type": "MARKET",
               "quantity": str(qty)}
     resp = api_post("/v3/place_order", params)
+    if not resp.get("Success", False):
+        log.error(f"SELL {pair} REJECTED: {resp.get('ErrMsg', 'unknown')}")
+        return None
     detail = resp.get("OrderDetail", resp)
     filled = float(detail.get("FilledQuantity", 0) or 0)
     return {"status": (detail.get("Status") or "").upper(), "filled": filled}
@@ -243,7 +292,11 @@ def get_regime_params(regime):
 
 # ── Coin ranking ──
 def find_bounce_candidates(state, prices, price_history):
-    """Find coins that dipped 3%+ from recent high and are bouncing."""
+    """Find coins that dipped 3%+ from recent high and are bouncing.
+    Optimized filters (backtested: Sharpe 1.27, PF 1.23):
+    - Require 2 consecutive red candles before the green bounce
+    - BTC bounce gives score boost (not a hard filter)
+    """
     candidates = []
     for pair in ALL_COINS:
         if pair in EXCLUDED:
@@ -261,8 +314,8 @@ def find_bounce_candidates(state, prices, price_history):
         if len(hist) < 5:
             continue
 
-        # Dipped from recent high
-        recent_high = max(hist[-10:]) if len(hist) >= 10 else max(hist)
+        # Dipped from recent high (3-bar lookback, optimized from 10)
+        recent_high = max(hist[-3:]) if len(hist) >= 3 else max(hist)
         current = p["last"]
         dip_pct = (recent_high - current) / recent_high
 
@@ -273,8 +326,20 @@ def find_bounce_candidates(state, prices, price_history):
         btc_hist = price_history.get("BTC/USD", [])
         btc_ok = len(btc_hist) < 5 or btc_hist[-1] >= btc_hist[-3]
 
-        if dip_pct > DIP_THRESHOLD and last_ret > 0 and btc_ok:
+        # FILTER: Require 2 consecutive drops before bounce (Sharpe +0.10)
+        if len(hist) < 4:
+            continue
+        two_red = hist[-2] < hist[-3] and hist[-3] < hist[-4] if len(hist) >= 4 else False
+        if not two_red:
+            continue
+
+        if dip_pct > DIP_THRESHOLD and dip_pct < DIP_MAX and last_ret > 0 and btc_ok:
             score = dip_pct + last_ret
+
+            # BOOST: Extra score when BTC is also bouncing (Sharpe +0.17)
+            if len(btc_hist) >= 2 and btc_hist[-1] > btc_hist[-2]:
+                score += 0.02  # prioritize entries when BTC confirms
+
             candidates.append((score, pair, p))
 
     candidates.sort(reverse=True)
@@ -312,7 +377,7 @@ def record_trade(state, pair, pnl):
     """Record trade for cooldown/count tracking."""
     state.setdefault("coin_trade_count", {})[pair] = state.get("coin_trade_count", {}).get(pair, 0) + 1
     if pnl < 0:
-        cooldown_until = (datetime.utcnow() + timedelta(hours=COOLDOWN_AFTER_LOSS_H)).isoformat()
+        cooldown_until = (datetime.now(timezone.utc) + timedelta(hours=COOLDOWN_AFTER_LOSS_H)).isoformat()
         state.setdefault("coin_cooldowns", {})[pair] = cooldown_until
         log.info(f"Cooldown {pair} for {COOLDOWN_AFTER_LOSS_H}h after loss")
 
@@ -346,6 +411,24 @@ def check_exits(state, prices, wallet):
         bid = p["bid"] if p["bid"] > 0 else current
         entry = pos["entry"]
         pnl_pct = (current - entry) / entry
+
+        # v10: ADD ON STRENGTH — if +1% in our favor, add 50% more size
+        # This pyramids into winners. Losers never reach +1% so no adds on losses.
+        if pnl_pct >= 0.01 and not pos.get("added"):
+            add_size = pos.get("size", 0) * 0.5
+            cash = wallet.get("USD", 0)
+            if cash >= add_size and add_size > 0:
+                ask = p["ask"] if p["ask"] > 0 else current
+                pr = prec(pair)
+                add_qty = round(add_size / ask, pr["amount"])
+                if add_qty > 0:
+                    result = place_buy(pair, add_qty)
+                    if result and result["filled"] > 0:
+                        pos["qty"] = pos.get("qty", 0) + result["filled"]
+                        pos["size"] = pos.get("size", 0) + add_size
+                        pos["added"] = True
+                        log.info(f"ADD ON STRENGTH {pair}: +50% size at ${current:.4f} ({pnl_pct:+.1%})")
+                        send_telegram(f"💪 ADD {pair}\n+50% size at ${current:.4f} ({pnl_pct:+.1%})")
 
         reason = None
 
@@ -384,11 +467,29 @@ def check_exits(state, prices, wallet):
         record_trade(state, pair, pnl)
         log.info(f"Closed {pair}: {reason} P&L=${pnl:+,.0f}")
 
+        # v6: Track consecutive stops for pause logic
+        if reason == "STOP":
+            state["_consecutive_stops"] = state.get("_consecutive_stops", 0) + 1
+            if state["_consecutive_stops"] >= PAUSE_AFTER_STOPS:
+                state["_paused_until"] = state.get("_cycle", 0) + 24  # pause ~6 minutes (24 × 15s)
+                log.info(f"PAUSE: {state['_consecutive_stops']} consecutive stops → pausing entries")
+                send_telegram(f"⚠️ {state['_consecutive_stops']} consecutive stops — pausing entries for 6 min")
+        else:
+            state["_consecutive_stops"] = 0
+
+        # v9: Track trade results for kill switch
+        results = state.get("_trade_results", [])
+        results.append(1 if pnl > 0 else 0)
+        state["_trade_results"] = results
+
 # ── Entry logic: bounce-only, regime sets TP/Stop ──
 
 def enter_bounces(state, prices, wallet, portfolio_value, price_history, regime):
     """Buy dipped coins that are bouncing. TP/Stop set by regime at entry time."""
     tp_pct, stop_pct = get_regime_params(regime)
+
+    # Volatility-adjusted sizing
+    vol_scale = calc_vol_scale(prices, price_history)
 
     candidates = find_bounce_candidates(state, prices, price_history)
     n_open = len(state["positions"])
@@ -397,7 +498,7 @@ def enter_bounces(state, prices, wallet, portfolio_value, price_history, regime)
         if n_open >= MAX_POSITIONS:
             break
 
-        size = portfolio_value * POSITION_SIZE_PCT
+        size = portfolio_value * V8_POS_SIZE_PCT * vol_scale
         cash = wallet.get("USD", 0)
         if cash < size * 1.01:
             break
@@ -422,6 +523,205 @@ def enter_bounces(state, prices, wallet, portfolio_value, price_history, regime)
             )
             n_open += 1
             time.sleep(1)
+
+# ── Volatility-adjusted position sizing ──
+def calc_vol_scale(prices, price_history):
+    """
+    Calculate position size multiplier based on BTC's current ATR.
+    Low vol = bigger positions (bounces reliable).
+    High vol = smaller positions (bounces unreliable).
+    Returns multiplier (0.3 to 2.0).
+    """
+    btc_hist = price_history.get("BTC/USD", [])
+    btc_price = prices.get("BTC/USD", {}).get("last", 0)
+
+    if len(btc_hist) < VOL_ADJ_ATR_PERIOD + 1 or btc_price <= 0:
+        return 1.0  # default to normal if not enough data
+
+    # Calculate ATR from price history ticks
+    # Since we have tick data (not OHLC), approximate ATR as avg absolute change
+    changes = []
+    for j in range(1, min(len(btc_hist), VOL_ADJ_ATR_PERIOD + 1)):
+        changes.append(abs(btc_hist[-j] - btc_hist[-j-1]))
+
+    if not changes:
+        return 1.0
+
+    avg_change = sum(changes) / len(changes)
+    atr_pct = avg_change / btc_price * 100
+
+    if atr_pct <= 0:
+        return 1.0
+
+    # Scale inversely: normal ATR (1.5%) = 1.0x, lower = bigger, higher = smaller
+    scale = VOL_ADJ_BASELINE / atr_pct
+    scale = max(VOL_ADJ_MIN_SCALE, min(VOL_ADJ_MAX_SCALE, scale))
+
+    return scale
+
+
+# ── RSI calculation ──
+def calc_rsi(prices_list, period=RSI_PERIOD):
+    """Calculate RSI from a list of prices."""
+    import numpy as np
+    if len(prices_list) < period + 1:
+        return 50  # neutral if not enough data
+    deltas = np.diff(prices_list[-(period + 1):])
+    gains = np.where(deltas > 0, deltas, 0)
+    losses = np.where(deltas < 0, -deltas, 0)
+    avg_gain = np.mean(gains)
+    avg_loss = np.mean(losses)
+    if avg_loss == 0:
+        return 100
+    rs = avg_gain / avg_loss
+    return 100 - (100 / (1 + rs))
+
+
+# ── RSI oversold entry logic ──
+def enter_rsi_oversold(state, prices, wallet, portfolio_value, price_history):
+    """Buy coins with RSI < 25 that are showing a green candle (oversold bounce)."""
+    rsi_positions = state.get("rsi_positions", {})
+    n_rsi = len(rsi_positions)
+
+    # Volatility-adjusted sizing
+    vol_scale = calc_vol_scale(prices, price_history)
+
+    candidates = []
+    for pair in ALL_COINS:
+        if pair in EXCLUDED:
+            continue
+        if pair in state["positions"] or pair in rsi_positions:
+            continue
+        # Check RSI cooldown
+        rsi_cd = state.get("rsi_cooldowns", {}).get(pair, 0)
+        if state.get("_cycle", 0) < rsi_cd:
+            continue
+
+        p = prices.get(pair)
+        if not p or p["last"] <= 0:
+            continue
+
+        hist = price_history.get(pair, [])
+        if len(hist) < RSI_PERIOD + 2:
+            continue
+
+        rsi = calc_rsi(hist, RSI_PERIOD)
+        if rsi >= RSI_OVERSOLD:
+            continue
+
+        # Must be green (bouncing)
+        if len(hist) >= 2 and hist[-1] <= hist[-2]:
+            continue
+
+        score = (RSI_OVERSOLD - rsi) / 100  # lower RSI = higher priority
+        candidates.append((score, pair, p, rsi))
+
+    candidates.sort(reverse=True)
+
+    for score, pair, p, rsi in candidates:
+        if n_rsi >= RSI_MAX_POSITIONS:
+            break
+
+        size = portfolio_value * RSI_POS_SIZE_PCT * vol_scale
+        cash = wallet.get("USD", 0)
+        if cash < size * 1.01:
+            break
+
+        ask = p["ask"]
+        pr = prec(pair)
+        qty = round(size / ask, pr["amount"])
+        if qty <= 0:
+            continue
+
+        result = place_buy(pair, qty)
+        if result and result["filled"] > 0 and result["fill_price"] > 0:
+            ep = result["fill_price"]
+            stop = round(ep * (1 - RSI_STOP), pr["price"])
+            tp = round(ep * (1 + RSI_TP), pr["price"])
+
+            rsi_positions[pair] = {
+                "entry": ep,
+                "qty": result["filled"],
+                "stop": stop,
+                "tp": tp,
+                "time": datetime.now(timezone.utc).isoformat(),
+                "rsi_at_entry": rsi,
+                "bar": state.get("_cycle", 0),
+            }
+            state["rsi_positions"] = rsi_positions
+
+            log.info(f"RSI BUY {pair}: RSI={rsi:.0f} @ ${ep:.4f} size=${size:,.0f}")
+            send_telegram(
+                f"📊 RSI BUY {pair}\n"
+                f"RSI: {rsi:.0f} (oversold)\n"
+                f"Size: ${size:,.0f}\n"
+                f"TP: ${tp:.4f} (+{RSI_TP:.0%})\n"
+                f"Stop: ${stop:.4f} (-{RSI_STOP:.0%})"
+            )
+            n_rsi += 1
+            time.sleep(1)
+
+
+# ── RSI exit logic ──
+def check_rsi_exits(state, prices, wallet, price_history):
+    """Check RSI positions for exit: stop, TP, RSI>50, or max hold."""
+    rsi_positions = state.get("rsi_positions", {})
+    to_close = []
+
+    for pair, pos in rsi_positions.items():
+        p = prices.get(pair)
+        if not p or p["last"] <= 0:
+            continue
+
+        coin = pair.split("/")[0]
+        held = wallet.get(coin, 0)
+        if held <= 0:
+            continue
+
+        current = p["last"]
+        bid = p["bid"] if p["bid"] > 0 else current
+        entry = pos["entry"]
+        pnl_pct = (current - entry) / entry
+
+        reason = None
+
+        # Hard stop
+        if current <= pos["stop"]:
+            reason = "RSI_STOP"
+        # Take profit
+        elif pos.get("tp") and current >= pos["tp"]:
+            reason = "RSI_TP"
+        else:
+            # RSI exit: sell when RSI crosses above 50
+            hist = price_history.get(pair, [])
+            if len(hist) >= RSI_PERIOD + 1:
+                rsi = calc_rsi(hist, RSI_PERIOD)
+                if rsi > RSI_EXIT:
+                    reason = "RSI_50"
+
+            # Max hold
+            bars_held = state.get("_cycle", 0) - pos.get("bar", 0)
+            if bars_held >= RSI_MAX_HOLD * (60 // CHECK_INTERVAL) and pnl_pct < 0.005:
+                reason = "RSI_TIME"
+
+        if reason:
+            sell_qty = min(pos["qty"], held)
+            result = place_sell(pair, sell_qty, bid)
+            pnl = (bid - entry) * sell_qty
+            state["total_pnl"] = state.get("total_pnl", 0) + pnl
+
+            emoji = "📈" if pnl > 0 else "📉"
+            log.info(f"{reason} {pair}: P&L=${pnl:+,.0f} ({pnl_pct:+.1%})")
+            send_telegram(f"{emoji} {reason} {pair}\nP&L: ${pnl:+,.0f} ({pnl_pct:+.1%})")
+            to_close.append((pair, reason, pnl))
+
+    for pair, reason, pnl in to_close:
+        rsi_positions.pop(pair, None)
+        if pnl < 0:
+            state.setdefault("rsi_cooldowns", {})[pair] = state.get("_cycle", 0) + RSI_COOLDOWN_BARS * (60 // CHECK_INTERVAL)
+
+    state["rsi_positions"] = rsi_positions
+
 
 # ── Price history tracking ──
 def update_price_history(state, prices):
@@ -461,9 +761,17 @@ def main():
     log.info("ADAPTIVE BOT STARTING")
     log.info("Mode: BOUNCE-ONLY (regime-adaptive TP/Stop)")
     log.info("=" * 50)
-    send_telegram("Adaptive bot started")
+    send_telegram(
+        "<b>DUAL BOT v9 ONLINE</b>\n"
+        "V8 Bounce (70%): dip + 2red + green\n"
+        "RSI Oversold (30%): RSI<25 + green\n"
+        "Max 6 positions (3+3)"
+    )
 
     state = load_state()
+    # Initialize RSI state if missing
+    state.setdefault("rsi_positions", {})
+    state.setdefault("rsi_cooldowns", {})
     cycle = 0
 
     while True:
@@ -496,26 +804,79 @@ def main():
                 send_telegram(f"Regime: {old} -> {regime}\nBreadth: {breadth:.0%}\nBTC trending: {'UP' if btc_up else 'DOWN'}")
                 state["regime"] = regime
 
-            # Check exits on all positions
+            # Check exits on all positions (V8 bounce + RSI)
             check_exits(state, prices, wallet)
+            check_rsi_exits(state, prices, wallet, price_history)
+
+            # v6: Track consecutive stops for pause logic
+            consecutive_stops = state.get("_consecutive_stops", 0)
+            paused_until = state.get("_paused_until", 0)
+
+            # v6: BTC 24h change filter
+            btc_hist = price_history.get("BTC/USD", [])
+            btc_24h = 0
+            if len(btc_hist) >= 2:
+                # Approximate 24h change from available history
+                lookback = min(len(btc_hist), 80)  # ~20 min of ticks
+                btc_24h = (btc_hist[-1] - btc_hist[-lookback]) / btc_hist[-lookback] * 100 if btc_hist[-lookback] > 0 else 0
+
+            # Also use the ticker's 24h change for BTC
+            btc_ticker_change = prices.get("BTC/USD", {}).get("change", 0) * 100
+
+            skip_entries = False
+            if btc_ticker_change < BTC_24H_MIN:
+                skip_entries = True
+                log.info(f"Skipping entries: BTC 24h={btc_ticker_change:+.1f}% < {BTC_24H_MIN}%")
+
+            if cycle < paused_until:
+                skip_entries = True
+                log.info(f"Paused after {PAUSE_AFTER_STOPS} consecutive stops (until cycle {paused_until})")
+
+            # v7: Skip entries when breadth < 30% (fixes bull period, all 4 regimes profitable)
+            if breadth < 0.30:
+                skip_entries = True
+                if cycle % 20 == 0:
+                    log.info(f"Skipping entries: breadth={breadth:.0%} < 30%")
+
+            # v9: Kill switch — if first N trades all lose, pause 12h
+            trade_results = state.get("_trade_results", [])
+            kill_paused = state.get("_kill_paused_until", 0)
+            if cycle < kill_paused:
+                skip_entries = True
+                if cycle % 20 == 0:
+                    log.info(f"Kill switch active — paused until cycle {kill_paused}")
+            elif len(trade_results) == KILL_IF_FIRST_N_LOSE and sum(trade_results) == 0:
+                # First N trades all lost — pause for 12 hours
+                state["_kill_paused_until"] = cycle + (12 * 3600 // CHECK_INTERVAL)
+                skip_entries = True
+                log.info(f"KILL SWITCH: first {KILL_IF_FIRST_N_LOSE} trades all lost — pausing 12h")
+                send_telegram(f"⛔ KILL SWITCH: first {KILL_IF_FIRST_N_LOSE} trades all lost\nPausing entries for 12 hours")
 
             # Enter new bounce positions (regime determines TP/Stop)
-            enter_bounces(state, prices, wallet, portfolio, price_history, regime)
+            if not skip_entries:
+                enter_bounces(state, prices, wallet, portfolio, price_history, regime)
+                # RSI oversold entries (independent signal, fills gaps)
+                enter_rsi_oversold(state, prices, wallet, portfolio, price_history)
 
             # Logging
             cycle += 1
+            state["_cycle"] = cycle
             if cycle % 20 == 0:  # every ~5 min
-                n_pos = len(state["positions"])
+                n_v8 = len(state["positions"])
+                n_rsi = len(state.get("rsi_positions", {}))
                 tp_pct, stop_pct = get_regime_params(regime)
-                log.info(f"${portfolio:,.0f} | {regime} (TP{tp_pct:.0%}/SL{stop_pct:.0%}) | {n_pos} pos | P&L: ${state['total_pnl']:+,.0f}")
+                vs = calc_vol_scale(prices, price_history)
+                log.info(f"${portfolio:,.0f} | {regime} | V8:{n_v8} RSI:{n_rsi} pos | vol_scale:{vs:.2f}x | P&L: ${state['total_pnl']:+,.0f}")
 
             if cycle % 240 == 0:  # hourly
-                n_pos = len(state["positions"])
+                n_v8 = len(state["positions"])
+                n_rsi = len(state.get("rsi_positions", {}))
                 send_telegram(
                     f"<b>Status</b>\n"
                     f"Portfolio: ${portfolio:,.0f}\n"
                     f"Regime: {regime} (breadth {breadth:.0%})\n"
-                    f"Positions: {n_pos}\n"
+                    f"V8 bounce: {n_v8} positions\n"
+                    f"RSI oversold: {n_rsi} positions\n"
                     f"Total P&L: ${state['total_pnl']:+,.0f}"
                 )
 

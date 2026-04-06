@@ -709,5 +709,14 @@ class TradingBot:
 
 
 if __name__ == "__main__":
+    # Prevent multiple instances
+    import fcntl, sys
+    lock_file = open('/tmp/quantx_bot.lock', 'w')
+    try:
+        fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except IOError:
+        print("ERROR: Bot is already running! Kill the other process first.")
+        sys.exit(1)
+
     bot = TradingBot()
     bot.run()

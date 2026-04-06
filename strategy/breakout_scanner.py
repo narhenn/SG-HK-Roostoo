@@ -24,13 +24,14 @@ log = logging.getLogger("TradingBot")
 from strategy.momentum_scanner import _alt_lock
 
 # ── Parameters (backtested optimal) ──
-STOP_LOSS_PCT = 0.002        # 0.20% — cut losers instantly
-TRAIL_PCT = 0.004            # 0.40% trailing stop from peak
-BREAKEVEN_AT = 0.001         # Move stop to BE at +0.10% profit
-MAX_POSITIONS = 15
-POSITION_SIZE_PCT = 0.25     # 25% of equity per position
+STOP_LOSS_PCT = 0.015        # 1.5% — room for noise (0.2% was getting stopped on every tick)
+TRAIL_PCT = 0.012            # 1.2% trailing stop from peak
+BREAKEVEN_AT = 0.005         # Move stop to BE at +0.5% profit
+MAX_POSITIONS = 10
+POSITION_SIZE_PCT = 0.15     # 15% of equity per position
 MAX_HOLD_BARS = 720          # 12 hours at 60-second polling
 SCAN_INTERVAL = 60           # Scan every 60 seconds
+COIN_COOLDOWN = 3600         # 1 hour cooldown per coin after selling (prevents re-entering losers)
 
 # Coins to exclude (low liquidity / meme)
 EXCLUDED = {'PAXG/USD', 'BONK/USD', 'DOGE/USD', 'SHIB/USD', 'PEPE/USD',
@@ -59,6 +60,7 @@ class BreakoutScanner:
         # Initialize state
         self.state.setdefault('breakout_positions', {})
         self.state.setdefault('breakout_trade_history', [])
+        self.state.setdefault('breakout_cooldowns', {})  # {pair: timestamp}
 
     def _save(self):
         if self.save_state_fn:
@@ -189,6 +191,11 @@ class BreakoutScanner:
         if len(self._price_history.get(pair, [])) < 60:
             return 0, None
 
+        # Cooldown check — don't re-enter coins that just got stopped
+        cooldown_until = self.state.get('breakout_cooldowns', {}).get(pair, 0)
+        if time.time() < cooldown_until:
+            return 0, None
+
         sma50 = self._sma(pair, 50)
         if sma50 <= 0 or price <= sma50:
             return 0, None
@@ -203,20 +210,8 @@ class BreakoutScanner:
         if price >= don20 and vol_ratio > 1.2:
             return vol_ratio + 30, 'DON20_BREAKOUT'
 
-        # Signal 2: Donchian 10 breakout + MACD
-        don10 = self._donchian_high_short(pair, 10)
-        if price >= don10 and vol_ratio > 1.0 and self._macd_bullish(pair):
-            return vol_ratio + 15, 'DON10_MACD'
-
-        # Signal 3: RSI oversold bounce
-        rsi = self._rsi(pair)
-        if rsi < 30:
-            return 5, 'RSI_OVERSOLD'
-
-        # Signal 4: BB lower band touch
-        bb_low = self._bb_lower(pair)
-        if bb_low > 0 and price < bb_low:
-            return 3, 'BB_LOWER'
+        # DON10, RSI_OVERSOLD, BB_LOWER removed — all lost money live.
+        # DON10 fired 56 times, lost $33,610. DON20 is the only signal that works.
 
         return 0, None
 
@@ -329,8 +324,9 @@ class BreakoutScanner:
             equity = self.state.get('current_equity', 1000000)
             self.state['current_equity'] = equity + net_pnl
 
-            # Remove position
+            # Remove position + set cooldown
             del self.state['breakout_positions'][pair]
+            self.state.setdefault('breakout_cooldowns', {})[pair] = time.time() + COIN_COOLDOWN
             self._save()
 
             # Telegram alert
