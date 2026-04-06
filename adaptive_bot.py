@@ -131,10 +131,10 @@ BTC_PUMP_EXIT_BREADTH = 0.50   # sell if breadth drops below 50%
 
 # ── RSI strategy params ──
 RSI_PERIOD = 7             # fast RSI
-RSI_OVERSOLD = 25          # buy when RSI < 25
-RSI_EXIT = 55              # sell when RSI crosses above 55 (was 50, exited too fast on tick noise)
-RSI_TP = 0.02              # +2% take profit
-RSI_STOP = 0.01            # -1% stop
+RSI_OVERSOLD = 20          # buy when RSI < 20 (was 25, too many weak signals that don't bounce enough to cover fees)
+RSI_EXIT = 60              # sell when RSI crosses above 60 (need bigger move to cover 0.2% round-trip fees)
+RSI_TP = 0.03              # +3% take profit (was 2%, need more to cover fees)
+RSI_STOP = 0.012           # -1.2% stop (slightly wider, fewer false stops)
 RSI_MAX_HOLD = 8           # 8 bar max hold (8 hours)
 RSI_MIN_HOLD_TICKS = 16    # hold at least 16 ticks (~4 min) before RSI exit (prevent instant flip)
 RSI_MAX_POSITIONS = 3      # max 3 RSI positions
@@ -230,9 +230,23 @@ def place_buy(pair, qty, price=0):
     qty = _floor_qty(qty, p["amount"])
     if qty <= 0:
         return None
-    log.info(f"BUY {pair}: qty={qty} @ MARKET")
-    params = {"pair": pair, "side": "BUY", "type": "MARKET",
-              "quantity": str(qty)}
+    # Use LIMIT at ask price (0.05% fee vs 0.1% market = saves 50% on fees)
+    if price <= 0:
+        # Fetch current ask
+        try:
+            ticker = api_get("/v3/ticker").get("Data", {}).get(pair, {})
+            price = float(ticker.get("MinAsk", 0))
+        except:
+            price = 0
+    if price > 0:
+        price = round(price * 1.001, p["price"])  # slightly above ask to ensure fill
+        log.info(f"BUY {pair}: qty={qty} @ LIMIT ${price}")
+        params = {"pair": pair, "side": "BUY", "type": "LIMIT",
+                  "quantity": str(qty), "price": str(price)}
+    else:
+        log.info(f"BUY {pair}: qty={qty} @ MARKET")
+        params = {"pair": pair, "side": "BUY", "type": "MARKET",
+                  "quantity": str(qty)}
     resp = api_post("/v3/place_order", params)
     if not resp.get("Success", False):
         log.error(f"BUY {pair} REJECTED: {resp.get('ErrMsg', 'unknown')}")
@@ -249,9 +263,16 @@ def place_sell(pair, qty, bid_price):
     qty = _floor_qty(qty, p["amount"])
     if qty <= 0:
         return None
-    log.info(f"SELL {pair}: qty={qty} @ MARKET")
-    params = {"pair": pair, "side": "SELL", "type": "MARKET",
-              "quantity": str(qty)}
+    # Use LIMIT at bid price (0.05% fee vs 0.1% market)
+    if bid_price > 0:
+        price = round(bid_price * 0.999, p["price"])  # slightly below bid to ensure fill
+        log.info(f"SELL {pair}: qty={qty} @ LIMIT ${price}")
+        params = {"pair": pair, "side": "SELL", "type": "LIMIT",
+                  "quantity": str(qty), "price": str(price)}
+    else:
+        log.info(f"SELL {pair}: qty={qty} @ MARKET")
+        params = {"pair": pair, "side": "SELL", "type": "MARKET",
+                  "quantity": str(qty)}
     resp = api_post("/v3/place_order", params)
     if not resp.get("Success", False):
         log.error(f"SELL {pair} REJECTED: {resp.get('ErrMsg', 'unknown')}")
