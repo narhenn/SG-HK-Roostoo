@@ -36,7 +36,8 @@ log = logging.getLogger()
 
 client = RoostooClient()
 EXCLUDED = {'PAXG/USD', '1000CHEEMS/USD', 'BONK/USD', 'SHIB/USD', 'PEPE/USD', 'FLOKI/USD',
-            'WLD/USD', 'ETH/USD', 'XRP/USD'}  # these consistently lose on patterns
+            'WLD/USD', 'ETH/USD', 'XRP/USD',
+            'BTC/USD'}  # BTC excluded: fees eat tiny % moves, caused $4k loss from churning
 
 # ── Config (optimized from backtest) ──
 TICK_INTERVAL = 10          # poll every 10 sec
@@ -44,12 +45,15 @@ CANDLE_SECONDS = 3600       # 1-hour candles (backtested best)
 MAX_POSITIONS = 4
 POSITION_SIZE = 150000      # $150k per trade
 HARD_STOP_PCT = 0.005       # 0.5% hard stop
-TRAIL_STOP_PCT = 0.015      # 1.5% trailing stop
+TRAIL_STOP_PCT = 0.020      # 2.0% trailing stop (backtested: wider trail lets winners run)
+PROFIT_TRAIL_PCT = 0.004    # 0.4% profit trail once up 1%+ (locks gains tight)
 COOLDOWN_SECONDS = 3600     # 1 hour cooldown per coin
 MIN_PATTERN_SCORE = 6       # score >= 6 (engulfing + marubozu/piercing/tweezer combos)
-MAX_HOLD_CANDLES = 8        # 8 hours max hold
+MAX_HOLD_CANDLES = 16       # 16 hours max hold (was 8, backtested: more time = more profit)
 SKIP_VOLUME_SPIKE = 2.0     # skip if volume >= 2x avg (traps)
 SKIP_TREND_PCT = 0.02       # skip if coin already up +2% (don't chase)
+MAX_PORTFOLIO_EXPOSURE = 0.60  # NEVER deploy more than 60% of total portfolio
+MIN_CASH_RESERVE = 200000   # ALWAYS keep $200k in cash
 
 # ── State ──
 tick_buffer = {}            # pair -> list of {t, p, b, a, v} within current candle
@@ -344,23 +348,22 @@ def check_exits(td):
             sell = True
             reason = 'HARD_STOP'
 
-        # 2. Bearish pattern detected
-        if not sell:
-            bear, bear_pattern = detect_exit_patterns(pair)
-            if bear and pnl_pct > -0.005:  # don't exit on pattern if deep in loss (let stop handle)
-                sell = True
-                reason = f'PATTERN_{bear_pattern}'
+        # 2. Bearish pattern exit DISABLED — backtested: causes 58 false exits, -$25k loss
+        # The 2% trail handles exits much better than pattern detection
+        # (bear patterns trigger on noise within normal 1h candle volatility)
 
         # 3. Profit lock — if up 1%+, trail 0.4% from peak
         if not sell and pnl_pct > 0.01:
-            trail = pos['peak'] * (1 - 0.004)
+            trail = pos['peak'] * (1 - PROFIT_TRAIL_PCT)
             if px <= trail:
                 sell = True
                 reason = 'PROFIT_TRAIL'
 
-        # 4. Breakeven stop — if up 0.3%+, move stop to entry
-        if not sell and pnl_pct > 0.003 and pos.get('stop', 0) < pos['entry']:
-            pos['stop'] = pos['entry'] * 1.001
+        # 4. Trailing stop update — if up 0.3%+, trail from peak
+        if not sell and pnl_pct > 0.003:
+            new_stop = pos['peak'] * (1 - TRAIL_STOP_PCT)
+            if new_stop > pos.get('stop', 0):
+                pos['stop'] = new_stop
 
         # 5. Dynamic stop
         if not sell and pos.get('stop', 0) > 0 and px <= pos['stop']:
@@ -378,11 +381,27 @@ def check_exits(td):
             pp = int(pi.get('PricePrecision', 4))
 
             try:
-                order = client.place_order(pair, 'SELL', 'LIMIT', pos['qty'], round(bid, pp))
+                # Use MARKET order for exits — LIMIT can sit unfilled and leave orphaned positions
+                order = client.place_order(pair, 'SELL', 'MARKET', pos['qty'], round(bid, pp))
                 det = order.get('OrderDetail', order)
                 exit_px = float(det.get('FilledAverPrice', 0) or bid)
-            except Exception:
-                exit_px = bid
+                filled_qty = float(det.get('FilledQuantity', 0) or 0)
+                status = (det.get('Status') or '').upper()
+
+                # If MARKET not supported or partial fill, try LIMIT at bid
+                if status not in ('FILLED', 'COMPLETED') and filled_qty < pos['qty'] * 0.9:
+                    log.info(f'{pair} MARKET sell incomplete ({status}), trying LIMIT at bid')
+                    order = client.place_order(pair, 'SELL', 'LIMIT', pos['qty'], round(bid, pp))
+                    det = order.get('OrderDetail', order)
+                    exit_px = float(det.get('FilledAverPrice', 0) or bid)
+            except Exception as e:
+                log.info(f'{pair} sell error: {e}, trying LIMIT fallback')
+                try:
+                    order = client.place_order(pair, 'SELL', 'LIMIT', pos['qty'], round(bid, pp))
+                    det = order.get('OrderDetail', order)
+                    exit_px = float(det.get('FilledAverPrice', 0) or bid)
+                except Exception:
+                    exit_px = bid
 
             pnl_pct_final = (exit_px - pos['entry']) / pos['entry'] * 100
             pnl_usd = (exit_px - pos['entry']) * pos['qty']
@@ -407,9 +426,42 @@ def check_exits(td):
             del positions[pair]
 
 
+def get_available_cash():
+    """Get available USD balance from Roostoo. Returns 0 on error (safe default = no trade)."""
+    try:
+        bal = client.get_balance()
+        if isinstance(bal, dict):
+            # Try common response formats
+            for key in ('Data', 'data', 'Balance', 'balance'):
+                if key in bal:
+                    bal = bal[key]
+                    break
+            if isinstance(bal, dict):
+                for key in ('USD', 'USDT', 'usd'):
+                    if key in bal:
+                        val = bal[key]
+                        if isinstance(val, dict):
+                            return float(val.get('Free', val.get('free', val.get('Available', 0))))
+                        return float(val)
+        return 0
+    except Exception as e:
+        log.info(f'Balance check failed: {e}')
+        return 0
+
+
 def check_entries(td):
     """Scan for entry patterns."""
     if len(positions) >= MAX_POSITIONS:
+        return
+
+    # SAFETY: check available cash BEFORE scanning
+    available = get_available_cash()
+    # Must keep minimum cash reserve
+    if available < MIN_CASH_RESERVE + POSITION_SIZE:
+        return
+    # Cap deployable cash
+    deployable = available - MIN_CASH_RESERVE
+    if deployable < POSITION_SIZE * 0.5:
         return
 
     candidates = []
@@ -433,16 +485,33 @@ def check_entries(td):
         if len(positions) >= MAX_POSITIONS:
             break
 
+        # SAFETY: skip if we already hold this pair (prevents position overwrite)
+        if pair in positions:
+            log.info(f'BLOCKED: {pair} already in positions — would overwrite!')
+            continue
+
         ask = float(info.get('MinAsk', 0))
         if ask <= 0:
             continue
+
+        # SAFETY: re-check cash right before buying (in case another position was just opened)
+        available = get_available_cash()
+        if available < POSITION_SIZE * 1.01:
+            log.info(f'BLOCKED: insufficient cash ${available:,.0f} < ${POSITION_SIZE*1.01:,.0f} needed')
+            break
+
+        # SAFETY: cap position size to never exceed 20% of available cash
+        actual_size = min(POSITION_SIZE, available * 0.20)
+        if actual_size < 10000:  # minimum viable trade
+            log.info(f'BLOCKED: capped size ${actual_size:,.0f} too small')
+            break
 
         exinfo = get_exinfo()
         pi = exinfo.get(pair, {})
         pp = int(pi.get('PricePrecision', 4))
         ap = int(pi.get('AmountPrecision', 2))
 
-        qty = math.floor(POSITION_SIZE / ask * 10**ap) / 10**ap
+        qty = math.floor(actual_size / ask * 10**ap) / 10**ap
         if qty <= 0:
             continue
 
@@ -474,6 +543,7 @@ def check_entries(td):
                 f'Pattern: {pattern} (score={score})\n'
                 f'Price: ${fill_px:.4f} | Size: ${fill_qty*fill_px:,.0f}\n'
                 f'Stop: ${fill_px*(1-HARD_STOP_PCT):.4f} (-{HARD_STOP_PCT*100:.0f}%)\n'
+                f'Cash left: ${available - fill_qty*fill_px:,.0f}\n'
                 f'{details.get("move_5", "")}'
             )
 
@@ -508,6 +578,53 @@ def main():
         f'8 patterns | Score >= {MIN_PATTERN_SCORE} to enter\n'
         f'Exit on reversal pattern or {HARD_STOP_PCT*100:.1f}% stop'
     )
+
+    # ── SAFETY: detect orphaned positions on startup ──
+    log.info('Checking for orphaned positions...')
+    try:
+        bal = client.get_balance()
+        bal_data = bal.get('Data', bal.get('data', bal))
+        if isinstance(bal_data, dict):
+            orphans = []
+            for coin, info in bal_data.items():
+                if coin == 'USD' or coin == 'USDT':
+                    continue
+                qty = 0
+                if isinstance(info, dict):
+                    qty = float(info.get('Free', 0)) + float(info.get('Locked', 0))
+                elif isinstance(info, (int, float)):
+                    qty = float(info)
+                if qty > 0:
+                    pair = f'{coin}/USD'
+                    orphans.append((pair, qty))
+            if orphans:
+                msg_parts = ['<b>ORPHANED POSITIONS DETECTED ON STARTUP:</b>']
+                for pair, qty in orphans:
+                    msg_parts.append(f'  {pair}: {qty} units')
+                    # Add to positions dict so exits are managed
+                    if pair not in positions:
+                        try:
+                            td_check = client.get_ticker().get('Data', {})
+                            px = float(td_check.get(pair, {}).get('LastPrice', 0))
+                            if px > 0:
+                                positions[pair] = {
+                                    'entry': px, 'qty': qty,
+                                    'peak': px,
+                                    'stop': px * (1 - HARD_STOP_PCT),
+                                    'time': time.time(),
+                                    'pattern': 'ORPHAN_RECOVERY', 'score': 0,
+                                    'entry_candle_idx': 0,
+                                    'candle_count': 0,
+                                }
+                                msg_parts.append(f'    → ADOPTED at ${px:.4f}, stop at ${px*(1-HARD_STOP_PCT):.4f}')
+                        except:
+                            msg_parts.append(f'    → FAILED to adopt, needs manual sell!')
+                alert('\n'.join(msg_parts))
+                log.info(f'Found {len(orphans)} orphaned positions, adopted into position manager')
+            else:
+                log.info('No orphaned positions found — clean slate')
+    except Exception as e:
+        log.info(f'Orphan check failed: {e} — proceeding with caution')
 
     # Bootstrap candle data from Binance (so we can trade immediately)
     log.info('Bootstrapping candle data from Binance...')
