@@ -76,13 +76,13 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s %(message)s',
 log = logging.getLogger()
 
 client = RoostooClient()
-EXCLUDED = {'PAXG/USD'}  # Trade everything except gold stablecoin
+EXCLUDED = {'PAXG/USD', '1000CHEEMS/USD', 'BONK/USD', 'SHIB/USD', 'PEPE/USD', 'FLOKI/USD'}  # skip gold + meme coins (wide spreads, whipsaw)
 
 # ── Config ──
 TICK_INTERVAL = 10
 CANDLE_SECONDS = 3600       # 1h candles
 MAX_POSITIONS = 4
-HARD_STOP_PCT = 0.005
+HARD_STOP_PCT = 0.015  # 1.5% — 0.5% was noise on 1H candles, caused 90% of losses
 TRAIL_STOP_PCT = 0.020
 PROFIT_TRAIL_PCT = 0.01     # 1% trail
 COOLDOWN_SECONDS = 3600
@@ -386,7 +386,7 @@ def calc_adx(cl, period=14):
 def detect_regime(pair='BTC/USD'):
     """BTC EMA50 slope + ADX for trend strength + breadth."""
     cl = list(candles.get(pair, []))
-    if len(cl) < 60: return 'BULL'  # default bull if not enough data
+    if len(cl) < 60: return 'CHOP'  # don't trade until we have enough data
 
     closes = [c['c'] for c in cl]
     ema50_now = calc_ema(closes, 50)
@@ -508,267 +508,6 @@ def detect_patterns(pair):
     pattern_name = '+'.join(patterns) if patterns else 'NONE'
     return score, pattern_name
 
-
-def detect_patterns(pair):
-    cl = list(candles.get(pair, []))
-    if len(cl) < 10: return 0, ''
-
-    score = 0
-    patterns = []
-    n = len(cl)
-    c = cl[-1]; p = cl[-2] if n >= 2 else c; pp = cl[-3] if n >= 3 else p
-
-    # Averages
-    bodies = [_bs(x) for x in cl[-14:]]
-    ranges = [_rng(x) for x in cl[-14:]]
-    avg_body = sum(bodies) / len(bodies) if bodies else 0.0001
-    avg_range = sum(ranges) / len(ranges) if ranges else 0.0001
-    if avg_body == 0: avg_body = 0.0001
-    if avg_range == 0: avg_range = 0.0001
-
-    bs = _bs(c); rng = _rng(c); bs_p = _bs(p)
-    lw = _lw(c); uw = _uw(c)
-
-    # ═══ REVERSALS ═══
-
-    # 1. Bullish Engulfing
-    if _rd(p) and _gr(c) and c['o'] <= p['c'] and c['c'] >= p['o'] and bs > bs_p * 1.2:
-        score += 3; patterns.append('ENGULF')
-
-    # 2. Hammer
-    if rng > 0 and bs > 0 and lw >= bs * 2 and uw <= bs * 0.5 and _gr(c):
-        score += 3; patterns.append('HAMMER')
-
-    # 3. Morning Star
-    if n >= 3:
-        b1, b2, b3 = _bs(cl[-3]), _bs(cl[-2]), _bs(cl[-1])
-        if _rd(cl[-3]) and b1 > avg_body and b2 < b1 * 0.3 and _gr(cl[-1]) and b3 > avg_body:
-            if cl[-1]['c'] > (cl[-3]['o'] + cl[-3]['c']) / 2:
-                score += 4; patterns.append('MSTAR')
-
-    # 4. Piercing Line
-    if _rd(p) and _gr(c):
-        mid = (p['o'] + p['c']) / 2
-        if c['o'] < p['c'] and c['c'] > mid and c['c'] < p['o']:
-            score += 3; patterns.append('PIERCE')
-
-    # 5. Tweezer Bottom
-    if n >= 2 and avg_range > 0 and abs(c['l'] - p['l']) / avg_range < 0.05:
-        if _rd(p) and _gr(c):
-            score += 3; patterns.append('TWZR')
-
-    # 6. Bullish Kicker
-    if _rd(p) and _gr(c) and c['o'] > p['o'] and bs > avg_body * 1.5:
-        score += 4; patterns.append('KICKER')
-
-    # 7. Three Inside Up
-    if n >= 3 and _rd(cl[-3]) and _bs(cl[-3]) > avg_body:
-        if _gr(cl[-2]) and cl[-2]['o'] > cl[-3]['c'] and cl[-2]['c'] < cl[-3]['o']:
-            if _gr(cl[-1]) and cl[-1]['c'] > cl[-3]['o']:
-                score += 3; patterns.append('3INSIDE')
-
-    # 8. Bullish Harami
-    if _rd(p) and _gr(c) and c['o'] > p['c'] and c['c'] < p['o'] and bs < bs_p * 0.5:
-        score += 2; patterns.append('HARAMI')
-
-    # 9. Dragonfly Doji (in downtrend)
-    if rng > 0 and bs <= rng * 0.1 and lw > rng * 0.6 and uw < rng * 0.1:
-        if n >= 5 and cl[-1]['c'] < cl[-5]['c']:
-            score += 3; patterns.append('DRAGON')
-
-    # 10. Inverted Hammer
-    if rng > 0 and bs > 0 and uw >= bs * 2 and lw <= bs * 0.3:
-        if n >= 5 and cl[-1]['c'] < cl[-5]['c']:  # in downtrend
-            score += 2; patterns.append('INVHAM')
-
-    # 11. Abandoned Baby
-    if n >= 3:
-        b2 = _bs(cl[-2]); r2 = _rng(cl[-2])
-        if _rd(cl[-3]) and r2 > 0 and b2 < r2 * 0.1:  # middle is doji
-            if cl[-2]['h'] < cl[-3]['l']:  # gap down
-                if _gr(cl[-1]) and cl[-1]['l'] > cl[-2]['h']:  # gap up
-                    score += 4; patterns.append('BABY')
-
-    # 12. Belt Hold
-    if _gr(c) and bs > avg_body * 1.5:
-        if (c['o'] - c['l']) < bs * 0.05:  # opened at low
-            score += 2; patterns.append('BELT')
-
-    # ═══ CONTINUATIONS ═══
-
-    # 13. Three White Soldiers
-    if n >= 3 and _gr(cl[-3]) and _gr(cl[-2]) and _gr(cl[-1]):
-        if cl[-1]['c'] > cl[-2]['c'] > cl[-3]['c']:
-            if _bs(cl[-1]) > 0 and _bs(cl[-2]) > 0 and _bs(cl[-3]) > 0:
-                score += 3; patterns.append('3WS')
-
-    # 14. Rising Three Methods
-    if n >= 5:
-        first = cl[-5]; last = cl[-1]
-        middle = cl[-4:-1]
-        if _gr(first) and _bs(first) > avg_body * 1.2:
-            if all(_rd(m) or _bs(m) < _bs(first) * 0.5 for m in middle):
-                if all(m['l'] >= first['l'] for m in middle):
-                    if _gr(last) and last['c'] > first['h']:
-                        score += 4; patterns.append('RISE3')
-
-    # 15. Mat Hold
-    if n >= 5:
-        first = cl[-5]; last = cl[-1]
-        middle = cl[-4:-1]
-        if _gr(first) and _bs(first) > avg_body:
-            small_middle = all(_bs(m) < _bs(first) * 0.5 for m in middle)
-            in_range = all(m['l'] >= first['o'] for m in middle)
-            if small_middle and in_range and _gr(last) and last['c'] > first['h']:
-                score += 4; patterns.append('MATHOLD')
-
-    # 16. Marubozu
-    if _gr(c) and bs > avg_body * 2:
-        if uw < bs * 0.1 and lw < bs * 0.1:
-            score += 3; patterns.append('MARU')
-
-    # 17. Rising Window (gap up)
-    if n >= 2 and c['l'] > p['h'] and _gr(c):
-        score += 3; patterns.append('WINDOW')
-
-    # ═══ STRUCTURE ═══
-
-    # 18. Inside Bar Breakout
-    if n >= 3:
-        mother = cl[-3]; inside = cl[-2]; breakout = cl[-1]
-        if inside['h'] <= mother['h'] and inside['l'] >= mother['l']:
-            if breakout['c'] > mother['h'] and _gr(breakout):
-                score += 3; patterns.append('INSIDE')
-
-    # 19. Higher High + Higher Low
-    if n >= 5:
-        if cl[-2]['l'] > cl[-4]['l'] and cl[-1]['h'] > cl[-3]['h'] and _gr(cl[-1]):
-            score += 2; patterns.append('HHHL')
-
-    # 20. Double Bottom
-    if n >= 20:
-        lows = [x['l'] for x in cl[-20:]]
-        si = sorted(range(len(lows)), key=lambda i: lows[i])
-        if len(si) >= 2 and abs(si[0] - si[1]) >= 3:
-            if abs(lows[si[0]] - lows[si[1]]) / lows[si[0]] < 0.005:
-                if _gr(cl[-1]):
-                    score += 3; patterns.append('DBLBOT')
-
-    # 21. Range Breakout
-    if n >= 12:
-        range_bars = cl[-12:-2]
-        range_high = max(x['h'] for x in range_bars)
-        range_low = min(x['l'] for x in range_bars)
-        range_pct = (range_high - range_low) / range_high * 100 if range_high > 0 else 99
-        if range_pct < 1.0 and cl[-1]['c'] > range_high and _gr(cl[-1]):
-            score += 3; patterns.append('RNGBRK')
-
-    # ═══ SMART MONEY CONCEPTS ═══
-
-    # 22. Bullish Fair Value Gap (FVG)
-    if n >= 3:
-        c1_high = cl[-3]['h']; c3_low = cl[-1]['l']
-        if c3_low > c1_high and _gr(cl[-1]):  # gap between candle 1 high and candle 3 low
-            gap_size = (c3_low - c1_high) / c['c'] * 100
-            if gap_size > 0.1:
-                score += 2; patterns.append('FVG')
-
-    # 23. Bullish Order Block
-    if n >= 5:
-        # Last red candle before a strong green move
-        for j in range(-5, -2):
-            if _rd(cl[j]) and _gr(cl[j+1]):
-                move = (cl[j+1]['c'] - cl[j+1]['o']) / cl[j+1]['o'] * 100
-                if move > 0.5:  # strong move after the red
-                    # Price came back to the order block zone
-                    if c['l'] <= cl[j]['h'] and c['c'] > cl[j]['h'] and _gr(c):
-                        score += 3; patterns.append('OB')
-                        break
-
-    # 24. Liquidity Sweep + Reclaim
-    if n >= 10:
-        recent_low = min(x['l'] for x in cl[-10:-1])
-        if c['l'] < recent_low and c['c'] > recent_low:  # swept below then closed above
-            if _gr(c):
-                score += 3; patterns.append('SWEEP')
-
-    # 25. Change of Character (CHoCH)
-    if n >= 10:
-        # Downtrend: lower highs. Then first higher high = CHoCH
-        highs = [x['h'] for x in cl[-10:]]
-        is_downtrend = all(highs[i] <= highs[i-1] * 1.001 for i in range(1, len(highs)-1))
-        if is_downtrend and cl[-1]['h'] > cl[-2]['h'] and _gr(cl[-1]):
-            score += 3; patterns.append('CHOCH')
-
-    # ═══ CONTEXT BONUSES ═══
-
-    # 26. SMA20 Bounce
-    if n >= 20:
-        sma20 = sum(x['c'] for x in cl[-20:]) / 20
-        if abs(c['c'] - sma20) / sma20 * 100 < 0.5 and _gr(c):
-            score += 2; patterns.append('SMA')
-
-    # 27. Squeeze Breakout
-    if n >= 6:
-        rng5 = max(x['h'] for x in cl[-6:-1]) - min(x['l'] for x in cl[-6:-1])
-        rng5_pct = rng5 / c['c'] * 100
-        if rng5_pct < 0.8 and rng / c['c'] * 100 > rng5_pct * 0.5 and _gr(c):
-            score += 2; patterns.append('SQUEEZE')
-
-    # 28. RSI Oversold Recovery
-    if n >= 15:
-        closes = [x['c'] for x in cl[-15:]]
-        deltas = [closes[i] - closes[i-1] for i in range(1, len(closes))]
-        gains = [d for d in deltas if d > 0]
-        losses_r = [-d for d in deltas if d < 0]
-        avg_g = sum(gains) / 14 if gains else 0.001
-        avg_l = sum(losses_r) / 14 if losses_r else 0.001
-        rsi = 100 - 100 / (1 + avg_g / avg_l)
-        if rsi < 40 and _gr(c):
-            score += 2; patterns.append('RSIREC')
-
-    # 29. Mean Reversion
-    if n >= 4 and sum(1 for x in cl[-4:-1] if _rd(x)) >= 3 and _gr(c):
-        score += 2; patterns.append('MEANREV')
-
-    # 30. Volume Confirmation
-    if n >= 2 and c.get('v', 0) > p.get('v', 0) * 1.2 and _gr(c):
-        score += 1; patterns.append('VOLCONF')
-
-    # 31. Near Support
-    if n >= 20:
-        low20 = min(x['l'] for x in cl[-20:])
-        if (c['c'] - low20) / c['c'] * 100 < 1.5:
-            score += 1; patterns.append('NEARSUP')
-
-    # 32. Momentum
-    if n >= 6:
-        move = (cl[-1]['c'] - cl[-6]['c']) / cl[-6]['c'] * 100
-        if move >= 1.0:
-            score += 2; patterns.append('MOM')
-
-    # 33. Volume Breakout
-    if n >= 10 and c.get('v', 0) > 0:
-        avg_vol = sum(x.get('v', 0) for x in cl[-10:-1]) / 9
-        if avg_vol > 0 and c['v'] > avg_vol * 2.5 and _gr(c) and bs > avg_body * 1.5:
-            score += 2; patterns.append('VOLBRK')
-
-    # 34. Trend Alignment (above EMA21)
-    if n >= 21:
-        ema = sum(x['c'] for x in cl[-21:]) / 21
-        if c['c'] > ema:
-            score += 1; patterns.append('TREND')
-
-    # 35. Candle Body Strength
-    if rng > 0 and bs / rng > 0.6 and _gr(c):
-        score += 1; patterns.append('STRONG')
-
-    # ── FILTER: spread too wide ──
-    if cl[-1].get('spread', 0) > 0.2:
-        score = max(0, score - 5)
-
-    pattern_name = '+'.join(patterns) if patterns else 'NONE'
-    return score, pattern_name
 
 
 def get_dynamic_size(score, regime):
@@ -1024,12 +763,12 @@ def scan_chart_patterns(pair):
 def check_entries(td):
     regime = detect_regime()
 
-    if regime == 'BULL':
-        max_pos = MAX_POSITIONS
-        min_score = MIN_PATTERN_SCORE
-    else:
-        max_pos = 1
-        min_score = 8
+    # Only trade in confirmed bull trends — bear/chop = sit in cash
+    if regime != 'BULL':
+        return
+
+    max_pos = MAX_POSITIONS
+    min_score = MIN_PATTERN_SCORE
 
     if len(positions) >= max_pos:
         return
