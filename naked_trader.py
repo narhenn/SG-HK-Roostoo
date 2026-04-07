@@ -583,11 +583,12 @@ def main():
     log.info('Checking for orphaned positions...')
     try:
         bal = client.get_balance()
-        bal_data = bal.get('Data', bal.get('data', bal))
+        # Roostoo balance API returns SpotWallet
+        bal_data = bal.get('SpotWallet', bal.get('Data', bal.get('data', bal)))
         if isinstance(bal_data, dict):
             orphans = []
             for coin, info in bal_data.items():
-                if coin == 'USD' or coin == 'USDT':
+                if coin in ('USD', 'USDT', 'Success', 'ErrMsg', 'SpotWallet'):
                     continue
                 qty = 0
                 if isinstance(info, dict):
