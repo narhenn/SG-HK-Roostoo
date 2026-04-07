@@ -953,8 +953,18 @@ def main():
         'LINEA/USD': 'linea',
         'STO/USD': 'stakestone',
         'PLUME/USD': 'plume',
+        'ASTER/USD': 'aster-2',
+        'BMT/USD': 'bubblemaps',
+        'LISTA/USD': 'lista',
+        'MIRA/USD': 'mira-3',
+        'PENGU/USD': 'pudgy-penguins',
+        'PUMP/USD': 'pump-fun',
+        'SOMI/USD': 'somnia',
+        'WLFI/USD': 'world-liberty-financial',
+        'XPL/USD': 'plasma',
+        'S/USD': 'sonic-3',
     }
-    # AVNT, FORM, EDEN not on CoinGecko — will build from Roostoo ticks
+    # AVNT, FORM, EDEN, OPEN, TUT not on CoinGecko — build from Roostoo ticks
     cg_count = 0
     for pair, cg_id in COINGECKO_IDS.items():
         if pair in candles:
@@ -976,7 +986,7 @@ def main():
                 cg_count += 1
         except Exception as e:
             log.info(f'  CoinGecko {pair} ({cg_id}): failed - {e}')
-        time.sleep(6)  # CoinGecko free tier: 10-15 req/min, be safe
+        time.sleep(7)  # CoinGecko free tier: ~10 req/min, need 15 requests
     if cg_count > 0:
         log.info(f'Bootstrapped {cg_count} more coins from CoinGecko')
     log.info(f'Total: {bootstrapped + cg_count} coins ready')
