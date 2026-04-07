@@ -944,7 +944,44 @@ def main():
                 bootstrapped += 1
         except: pass
         time.sleep(0.1)
-    log.info(f'Bootstrapped {bootstrapped} coins — ready')
+    log.info(f'Bootstrapped {bootstrapped} coins from Binance')
+
+    # CoinGecko fallback for coins not on Binance
+    COINGECKO_IDS = {
+        'AVNT/USD': 'aventis-ai',
+        'HEMI/USD': 'hemi',
+        'VIRTUAL/USD': 'virtual-protocol',
+        'FORM/USD': 'binaryx',
+        'LINEA/USD': 'linea',
+        'EDEN/USD': 'eden-network',
+        'STO/USD': 'sto',
+        'PLUME/USD': 'plume-network',
+    }
+    cg_count = 0
+    for pair, cg_id in COINGECKO_IDS.items():
+        if pair in candles:
+            continue  # already have from Binance
+        try:
+            import urllib.request, json as jn
+            url = f'https://api.coingecko.com/api/v3/coins/{cg_id}/ohlc?vs_currency=usd&days=7'
+            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = jn.loads(resp.read())
+            if isinstance(data, list) and len(data) > 10:
+                candles[pair] = deque(maxlen=200)
+                for d in data[:-1]:
+                    if isinstance(d, list) and len(d) >= 5:
+                        candles[pair].append({
+                            'o': d[1], 'h': d[2], 'l': d[3], 'c': d[4],
+                            'v': 1.0, 't': d[0] / 1000,
+                        })
+                cg_count += 1
+        except:
+            pass
+        time.sleep(1.5)  # CoinGecko rate limit
+    if cg_count > 0:
+        log.info(f'Bootstrapped {cg_count} more coins from CoinGecko')
+    log.info(f'Total: {bootstrapped + cg_count} coins ready')
 
     # Orphan detection
     log.info('Checking for orphaned positions...')
