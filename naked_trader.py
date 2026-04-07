@@ -185,25 +185,82 @@ def _lw(c): return min(c['o'], c['c']) - c['l']
 def _rng(c): return c['h'] - c['l']
 
 
+def calc_market_health():
+    """
+    Market Health Score based on 24H rolling breadth across ALL coins.
+    Counts how many coins are up vs down over last 24 candles (24 hours).
+
+    Returns: (regime, max_pos, size_mult)
+        'BULL'  = 60%+ coins rising, full mode
+        'CAUTIOUS' = 40-60% rising, reduce positions
+        'BEAR'  = <40% rising, defensive mode
+    """
+    up = 0
+    down = 0
+    total = 0
+
+    for pair, cl_deque in candles.items():
+        cl = list(cl_deque)
+        if len(cl) < 24:
+            continue
+        total += 1
+        chg_24h = (cl[-1]['c'] - cl[-24]['c']) / cl[-24]['c'] * 100
+        if chg_24h > 0:
+            up += 1
+        else:
+            down += 1
+
+    if total == 0:
+        return 'BULL', 4, 1.0
+
+    breadth = up / total * 100  # % of coins trending up
+
+    # Also check BTC specifically for fast crash detection
+    btc_cl = list(candles.get('BTC/USD', []))
+    btc_dumping = False
+    if len(btc_cl) >= 3:
+        btc_3h = (btc_cl[-1]['c'] - btc_cl[-3]['c']) / btc_cl[-3]['c'] * 100
+        if btc_3h < -1.0:
+            btc_dumping = True
+        # Also check if current BTC candle is big red
+        btc_body = (btc_cl[-1]['c'] - btc_cl[-1]['o']) / btc_cl[-1]['o'] * 100
+        if btc_body < -0.5:
+            btc_dumping = True
+
+    if btc_dumping or breadth < 30:
+        return 'BEAR', 1, 0.5       # 1 position, half size
+    elif breadth < 50:
+        return 'CAUTIOUS', 2, 0.75  # 2 positions, 75% size
+    elif breadth < 65:
+        return 'BULL', 3, 1.0       # 3 positions, full size
+    else:
+        return 'BULL', 4, 1.0       # 4 positions, full size
+
+
 def detect_regime(pair='BTC/USD'):
-    """BULL unless BTC below EMA20 AND (RSI<40 or 3h drop > 0.5%)"""
+    """Combined regime: market breadth + BTC structure"""
+    # Primary: market breadth (the real signal)
+    regime, max_pos, size_mult = calc_market_health()
+
+    # Secondary: BTC EMA check (backup for when breadth data is thin)
     cl = list(candles.get(pair, []))
-    if len(cl) < 20: return 'BULL'
-    closes = [c['c'] for c in cl]
-    ema20 = sum(closes[-20:]) / 20
-    px = closes[-1]
-    # RSI
-    deltas = [closes[i] - closes[i-1] for i in range(-14, 0)]
-    gains = [d for d in deltas if d > 0]
-    losses = [-d for d in deltas if d < 0]
-    avg_g = sum(gains) / 14 if gains else 0.001
-    avg_l = sum(losses) / 14 if losses else 0.001
-    rsi = 100 - 100 / (1 + avg_g / avg_l)
-    # 3h change
-    chg3 = (closes[-1] - closes[-4]) / closes[-4] * 100 if len(closes) >= 4 else 0
-    if px < ema20 and (rsi < 40 or chg3 < -0.5):
-        return 'BEAR'
-    return 'BULL'
+    if len(cl) >= 20:
+        closes = [c['c'] for c in cl]
+        ema20 = sum(closes[-20:]) / 20
+        px = closes[-1]
+        deltas = [closes[i] - closes[i-1] for i in range(-14, 0)]
+        gains = [d for d in deltas if d > 0]
+        losses = [-d for d in deltas if d < 0]
+        avg_g = sum(gains) / 14 if gains else 0.001
+        avg_l = sum(losses) / 14 if losses else 0.001
+        rsi = 100 - 100 / (1 + avg_g / avg_l)
+        # If BTC is clearly bearish, override to BEAR even if breadth is ok
+        if px < ema20 and rsi < 35:
+            regime = 'BEAR'
+            max_pos = 1
+            size_mult = 0.5
+
+    return regime
 
 
 def detect_patterns(pair):
@@ -722,12 +779,21 @@ def scan_chart_patterns(pair):
 def check_entries(td):
     regime = detect_regime()
 
-    if regime == 'BULL':
-        max_pos = MAX_POSITIONS
-        min_score = MIN_PATTERN_SCORE
-    else:
+    # Market health determines position count and size
+    health_regime, health_max_pos, health_size_mult = calc_market_health()
+
+    if regime == 'BEAR' or health_regime == 'BEAR':
         max_pos = 1
         min_score = 8
+        size_mult = 0.5
+    elif health_regime == 'CAUTIOUS':
+        max_pos = min(2, health_max_pos)
+        min_score = MIN_PATTERN_SCORE
+        size_mult = 0.75
+    else:
+        max_pos = MAX_POSITIONS
+        min_score = MIN_PATTERN_SCORE
+        size_mult = 1.0
 
     if len(positions) >= max_pos:
         return
@@ -834,9 +900,9 @@ def check_entries(td):
         if _rng(cl[-1]) > 0 and _bs(cl[-1]) / _rng(cl[-1]) < 0.1:
             continue
 
-        # Cash check
+        # Cash check — apply market health size multiplier
         available = get_cash()
-        size = get_dynamic_size(total_score, regime)
+        size = int(get_dynamic_size(total_score, regime) * size_mult)
         if available < MIN_CASH_RESERVE + size:
             break
         size = min(size, (available - MIN_CASH_RESERVE) * 0.25)
@@ -1050,10 +1116,16 @@ def main():
                             parts.append(f'{p.split("/")[0]}({pnl:+.2f}%)')
                     pos_str = ' | ' + ', '.join(parts)
 
+                h_regime, h_max, h_mult = calc_market_health()
+                # Count breadth
+                up_coins = sum(1 for pair, cl_d in candles.items() if len(list(cl_d)) >= 24 and list(cl_d)[-1]['c'] > list(cl_d)[-24]['c'])
+                total_coins = sum(1 for pair, cl_d in candles.items() if len(list(cl_d)) >= 24)
+                breadth_pct = up_coins / total_coins * 100 if total_coins > 0 else 0
+
                 log.info(
                     f'${cash:,.0f}{pos_str} | '
                     f'{n} trades ({wins}W {wr:.0f}%) | P&L=${total_pnl:+,.0f} | '
-                    f'Regime={regime}'
+                    f'Health={h_regime} breadth={breadth_pct:.0f}% maxPos={h_max} sizeMult={h_mult}'
                 )
 
         except Exception as e:
