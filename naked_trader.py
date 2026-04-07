@@ -948,14 +948,13 @@ def main():
 
     # CoinGecko fallback for coins not on Binance
     COINGECKO_IDS = {
-        'AVNT/USD': 'aventis-ai',
         'HEMI/USD': 'hemi',
         'VIRTUAL/USD': 'virtual-protocol',
-        'FORM/USD': 'formation-fi',
         'LINEA/USD': 'linea',
         'STO/USD': 'stakestone',
         'PLUME/USD': 'plume',
     }
+    # AVNT, FORM, EDEN not on CoinGecko — will build from Roostoo ticks
     cg_count = 0
     for pair, cg_id in COINGECKO_IDS.items():
         if pair in candles:
@@ -975,9 +974,9 @@ def main():
                             'v': 1.0, 't': d[0] / 1000,
                         })
                 cg_count += 1
-        except:
-            pass
-        time.sleep(1.5)  # CoinGecko rate limit
+        except Exception as e:
+            log.info(f'  CoinGecko {pair} ({cg_id}): failed - {e}')
+        time.sleep(6)  # CoinGecko free tier: 10-15 req/min, be safe
     if cg_count > 0:
         log.info(f'Bootstrapped {cg_count} more coins from CoinGecko')
     log.info(f'Total: {bootstrapped + cg_count} coins ready')
