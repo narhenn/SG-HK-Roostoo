@@ -579,55 +579,7 @@ def main():
         f'Exit on reversal pattern or {HARD_STOP_PCT*100:.1f}% stop'
     )
 
-    # ── SAFETY: detect orphaned positions on startup ──
-    log.info('Checking for orphaned positions...')
-    try:
-        bal = client.get_balance()
-        # Roostoo balance API returns SpotWallet
-        bal_data = bal.get('SpotWallet', bal.get('Data', bal.get('data', bal)))
-        if isinstance(bal_data, dict):
-            orphans = []
-            for coin, info in bal_data.items():
-                if coin in ('USD', 'USDT', 'Success', 'ErrMsg', 'SpotWallet'):
-                    continue
-                qty = 0
-                if isinstance(info, dict):
-                    qty = float(info.get('Free', 0)) + float(info.get('Locked', 0))
-                elif isinstance(info, (int, float)):
-                    qty = float(info)
-                if qty > 0:
-                    pair = f'{coin}/USD'
-                    orphans.append((pair, qty))
-            if orphans:
-                msg_parts = ['<b>ORPHANED POSITIONS DETECTED ON STARTUP:</b>']
-                for pair, qty in orphans:
-                    msg_parts.append(f'  {pair}: {qty} units')
-                    # Add to positions dict so exits are managed
-                    if pair not in positions:
-                        try:
-                            td_check = client.get_ticker().get('Data', {})
-                            px = float(td_check.get(pair, {}).get('LastPrice', 0))
-                            if px > 0:
-                                positions[pair] = {
-                                    'entry': px, 'qty': qty,
-                                    'peak': px,
-                                    'stop': px * (1 - HARD_STOP_PCT),
-                                    'time': time.time(),
-                                    'pattern': 'ORPHAN_RECOVERY', 'score': 0,
-                                    'entry_candle_idx': 0,
-                                    'candle_count': 0,
-                                }
-                                msg_parts.append(f'    → ADOPTED at ${px:.4f}, stop at ${px*(1-HARD_STOP_PCT):.4f}')
-                        except:
-                            msg_parts.append(f'    → FAILED to adopt, needs manual sell!')
-                alert('\n'.join(msg_parts))
-                log.info(f'Found {len(orphans)} orphaned positions, adopted into position manager')
-            else:
-                log.info('No orphaned positions found — clean slate')
-    except Exception as e:
-        log.info(f'Orphan check failed: {e} — proceeding with caution')
-
-    # Bootstrap candle data from Binance (so we can trade immediately)
+    # Bootstrap candle data from Binance FIRST (so orphan detection has candle counts)
     log.info('Bootstrapping candle data from Binance...')
     COIN_TO_BINANCE = {
         'BTC/USD':'BTCUSDT','ETH/USD':'ETHUSDT','SOL/USD':'SOLUSDT','BNB/USD':'BNBUSDT',
@@ -661,6 +613,53 @@ def main():
             pass
         time.sleep(0.1)
     log.info(f'Bootstrapped {bootstrapped} coins with ~50 hourly candles each — ready to trade')
+
+    # ── SAFETY: detect orphaned positions on startup (AFTER bootstrap so candle counts are correct) ──
+    log.info('Checking for orphaned positions...')
+    try:
+        bal = client.get_balance()
+        bal_data = bal.get('SpotWallet', bal.get('Data', bal.get('data', bal)))
+        if isinstance(bal_data, dict):
+            orphans = []
+            for coin, info in bal_data.items():
+                if coin in ('USD', 'USDT', 'Success', 'ErrMsg', 'SpotWallet'):
+                    continue
+                qty = 0
+                if isinstance(info, dict):
+                    qty = float(info.get('Free', 0)) + float(info.get('Locked', 0))
+                elif isinstance(info, (int, float)):
+                    qty = float(info)
+                if qty > 0:
+                    pair = f'{coin}/USD'
+                    orphans.append((pair, qty))
+            if orphans:
+                msg_parts = ['<b>ORPHANED POSITIONS DETECTED ON STARTUP:</b>']
+                for pair, qty in orphans:
+                    msg_parts.append(f'  {pair}: {qty} units')
+                    if pair not in positions:
+                        try:
+                            td_check = client.get_ticker().get('Data', {})
+                            px = float(td_check.get(pair, {}).get('LastPrice', 0))
+                            if px > 0:
+                                cl_len = len(candles.get(pair, []))
+                                positions[pair] = {
+                                    'entry': px, 'qty': qty,
+                                    'peak': px,
+                                    'stop': px * (1 - HARD_STOP_PCT),
+                                    'time': time.time(),
+                                    'pattern': 'ORPHAN_RECOVERY', 'score': 0,
+                                    'entry_candle_idx': cl_len,
+                                    'candle_count': 0,
+                                }
+                                msg_parts.append(f'    → ADOPTED at ${px:.4f}, stop at ${px*(1-HARD_STOP_PCT):.4f}')
+                        except:
+                            msg_parts.append(f'    → FAILED to adopt, needs manual sell!')
+                alert('\n'.join(msg_parts))
+                log.info(f'Found {len(orphans)} orphaned positions, adopted into position manager')
+            else:
+                log.info('No orphaned positions found — clean slate')
+    except Exception as e:
+        log.info(f'Orphan check failed: {e} — proceeding with caution')
 
     import fcntl, sys
     lock = open('/tmp/naked_trader.lock', 'w')
