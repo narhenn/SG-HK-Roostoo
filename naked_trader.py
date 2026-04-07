@@ -511,16 +511,23 @@ def check_exits(td):
             else:
                 continue
 
-        # 1. ATR Stop
+        # 1. ATR Stop — use chart stop if available (more precise), otherwise ATR
         if not sell:
-            if regime == 'BEAR':
+            if pos.get('chart_stop', 0) > 0:
+                stop_level = pos['chart_stop']  # pattern-defined stop (e.g. below double bottom)
+            elif regime == 'BEAR':
                 stop_level = pos['entry'] - atr * 1.0
             else:
                 stop_level = pos['entry'] - atr * 1.2
             if px <= stop_level:
                 sell = True; reason = 'ATR_STOP'
 
-        # 2. Profit trail — once up 1%+, trail from peak
+        # 2. Chart pattern target hit — measured move complete
+        if not sell and pos.get('chart_target', 0) > 0:
+            if px >= pos['chart_target']:
+                sell = True; reason = 'CHART_TARGET'
+
+        # 3. Profit trail — once up 1%+, trail from peak
         if not sell and pnl_pct > 0.01:
             trail = pos['peak'] * (1 - PROFIT_TRAIL_PCT)
             if px <= trail:
@@ -536,7 +543,13 @@ def check_exits(td):
         if not sell and pos.get('stop', 0) > 0 and px <= pos['stop']:
             sell = True; reason = 'TRAIL'
 
-        # 5. Partial exit at +1%
+        # 5. Bearish chart pattern detected — exit if in profit
+        if not sell and pnl_pct > 0.002:
+            bear_charts = [s for s in scan_chart_patterns(pair) if s[1] < 0]
+            if bear_charts:
+                sell = True; reason = 'BEAR_CHART'
+
+        # 6. Partial exit at +1%
         if not sell and pnl_pct > 0.01 and not pos.get('partial_done'):
             # Sell 50%
             half_qty = pos['qty'] * 0.5
@@ -599,6 +612,113 @@ def check_exits(td):
             del positions[pair]
 
 
+def scan_chart_patterns(pair):
+    """Scan for chart patterns using the encyclopedia detector.
+    Returns list of (pattern_name, score, entry, stop, target)."""
+    import pandas as pd
+    cl = list(candles.get(pair, []))
+    if len(cl) < 30:
+        return []
+
+    # Build DataFrame for the detector
+    df = pd.DataFrame(cl[-80:] if len(cl) > 80 else cl)
+    if len(df) < 30:
+        return []
+
+    # Rename columns to match detector expectations
+    df = df.rename(columns={'o': 'open', 'h': 'high', 'l': 'low', 'c': 'close', 'v': 'volume'})
+    if 'volume' not in df.columns:
+        df['volume'] = 1.0
+
+    signals = []
+    try:
+        from pattern_encyclopedia import ChartPatternDetector
+        det = ChartPatternDetector(df)
+
+        # BULLISH CHART PATTERNS — each gives entry/stop/target
+        bullish_methods = [
+            ('detect_bull_flag', 'BULL_FLAG', 5),
+            ('detect_ascending_triangle', 'ASC_TRI', 5),
+            ('detect_symmetrical_triangle', 'SYM_TRI', 4),
+            ('detect_double_bottom', 'DBL_BOT', 4),
+            ('detect_inverse_head_shoulders', 'INV_H&S', 5),
+            ('detect_falling_wedge', 'FALL_WEDGE', 4),
+            ('detect_cup_and_handle', 'CUP_HANDLE', 5),
+            ('detect_rectangle_channel', 'RECT_CHAN', 4),
+            ('detect_rounding_bottom', 'ROUND_BOT', 4),
+            ('detect_pennant', 'PENNANT', 4),
+            ('detect_triple_bottom', 'TRIPLE_BOT', 5),
+            ('detect_v_bottom', 'V_BOTTOM', 3),
+            ('detect_island_reversal', 'ISLAND', 4),
+            ('detect_measured_move', 'MEAS_MOVE', 4),
+        ]
+
+        for method_name, pat_name, pat_score in bullish_methods:
+            try:
+                result = getattr(det, method_name)()
+                if not result:
+                    continue
+                if isinstance(result, list):
+                    for r in result:
+                        if not isinstance(r, dict):
+                            continue
+                        # Only bullish patterns
+                        pat_type = r.get('pattern', '').lower()
+                        if 'bear' in pat_type or 'top' in pat_type:
+                            continue
+                        entry = r.get('entry', 0)
+                        stop = r.get('stop', 0)
+                        target = r.get('target', 0)
+                        if entry > 0 and stop > 0 and target > 0 and target > entry and stop < entry:
+                            risk = (entry - stop) / entry * 100
+                            reward = (target - entry) / entry * 100
+                            rr = reward / risk if risk > 0 else 0
+                            if risk <= 3.0 and rr >= 1.5:
+                                signals.append((pat_name, pat_score, entry, stop, target, rr))
+                elif isinstance(result, dict):
+                    pat_type = result.get('pattern', '').lower()
+                    if 'bear' in pat_type or 'top' in pat_type:
+                        continue
+                    entry = result.get('entry', 0)
+                    stop = result.get('stop', 0)
+                    target = result.get('target', 0)
+                    if entry > 0 and stop > 0 and target > 0 and target > entry and stop < entry:
+                        risk = (entry - stop) / entry * 100
+                        reward = (target - entry) / entry * 100
+                        rr = reward / risk if risk > 0 else 0
+                        if risk <= 3.0 and rr >= 1.5:
+                            signals.append((pat_name, pat_score, entry, stop, target, rr))
+            except Exception:
+                pass
+
+        # BEARISH CHART PATTERNS — for exit signals
+        bearish_methods = [
+            'detect_bear_flag', 'detect_descending_triangle', 'detect_double_top',
+            'detect_head_and_shoulders', 'detect_rising_wedge', 'detect_rounding_top',
+            'detect_triple_top', 'detect_v_top', 'detect_inverted_cup_and_handle',
+        ]
+        for method_name in bearish_methods:
+            try:
+                result = getattr(det, method_name)()
+                if result:
+                    if isinstance(result, list) and result:
+                        r = result[0]
+                    elif isinstance(result, dict):
+                        r = result
+                    else:
+                        continue
+                    pat_type = r.get('pattern', '').lower()
+                    if 'bear' in pat_type or 'top' in pat_type:
+                        signals.append(('BEAR_CHART_' + method_name.replace('detect_', '').upper(), -5, 0, 0, 0, 0))
+            except Exception:
+                pass
+
+    except Exception as e:
+        pass
+
+    return signals
+
+
 def check_entries(td):
     regime = detect_regime()
 
@@ -623,17 +743,47 @@ def check_entries(td):
         if pair in cooldowns and time.time() < cooldowns[pair]:
             continue
 
-        score, pattern = detect_patterns(pair)
-        if score >= min_score:
+        # CANDLESTICK score
+        candle_score, candle_pattern = detect_patterns(pair)
+
+        # CHART PATTERN scan (runs less frequently — only if candles exist)
+        chart_signals = scan_chart_patterns(pair)
+        chart_bullish = [s for s in chart_signals if s[1] > 0]
+        chart_bearish = [s for s in chart_signals if s[1] < 0]
+
+        # If bearish chart pattern detected, skip entry entirely
+        if chart_bearish:
+            continue
+
+        # Best chart pattern
+        best_chart = None
+        chart_score = 0
+        if chart_bullish:
+            chart_bullish.sort(key=lambda x: -x[5])  # sort by R:R
+            best_chart = chart_bullish[0]
+            chart_score = best_chart[1]  # pattern score (4-5)
+
+        # Combined score: candlestick + chart pattern bonus
+        total_score = candle_score + chart_score
+
+        if total_score >= min_score:
             spread = float(info.get('MinAsk', 0)) - float(info.get('MaxBid', 0))
             bid = float(info.get('MaxBid', 0))
             spread_pct = spread / bid * 100 if bid > 0 else 99
             if spread_pct < 0.2:
-                candidates.append((score, pair, info, pattern))
+                # Build pattern name
+                pat_parts = []
+                if candle_pattern and candle_pattern != 'NONE':
+                    pat_parts.append(candle_pattern)
+                if best_chart:
+                    pat_parts.append(f'CHART:{best_chart[0]}')
+                pattern = '+'.join(pat_parts) if pat_parts else 'NONE'
+
+                candidates.append((total_score, pair, info, pattern, best_chart))
 
     candidates.sort(key=lambda x: -x[0])
 
-    for score, pair, info, pattern in candidates[:1]:
+    for total_score, pair, info, pattern, best_chart in candidates[:1]:
         if len(positions) >= max_pos:
             break
         if pair in positions:
@@ -676,7 +826,7 @@ def check_entries(td):
 
         # Cash check
         available = get_cash()
-        size = get_dynamic_size(score, regime)
+        size = get_dynamic_size(total_score, regime)
         if available < MIN_CASH_RESERVE + size:
             break
         size = min(size, (available - MIN_CASH_RESERVE) * 0.25)
@@ -703,22 +853,31 @@ def check_entries(td):
             fill_qty = filled or qty
             cl_now = list(candles.get(pair, []))
 
+            # If chart pattern provided entry/stop/target, use those
+            chart_stop = 0
+            chart_target = 0
+            if best_chart:
+                _, _, chart_entry, chart_stop, chart_target, chart_rr = best_chart
+
             positions[pair] = {
                 'entry': fill_px, 'qty': fill_qty,
                 'peak': fill_px,
-                'stop': 0,
+                'stop': chart_stop if chart_stop > 0 else 0,
                 'time': time.time(),
-                'pattern': pattern, 'score': score,
+                'pattern': pattern, 'score': total_score,
                 'entry_candle_idx': len(cl_now),
                 'candle_count': 0,
                 'partial_done': False,
+                'chart_target': chart_target,
+                'chart_stop': chart_stop,
             }
 
+            target_str = f' | Target: ${chart_target:.4f}' if chart_target > 0 else ''
             alert(
                 f'<b>🎯 NAKED BUY {pair}</b>\n'
-                f'Pattern: {pattern} (score={score})\n'
+                f'Pattern: {pattern} (score={total_score})\n'
                 f'Price: ${fill_px:.4f} | Size: ${fill_qty*fill_px:,.0f}\n'
-                f'Regime: {regime} | Cash: ${available-fill_qty*fill_px:,.0f}'
+                f'Regime: {regime} | Cash: ${available-fill_qty*fill_px:,.0f}{target_str}'
             )
 
         except Exception as e:
