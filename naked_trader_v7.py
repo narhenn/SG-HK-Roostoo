@@ -76,8 +76,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s %(message)s',
 log = logging.getLogger()
 
 client = RoostooClient()
-EXCLUDED = {'PAXG/USD', '1000CHEEMS/USD', 'BONK/USD', 'SHIB/USD', 'PEPE/USD', 'FLOKI/USD',
-            'WLD/USD', 'ETH/USD', 'XRP/USD', 'BTC/USD'}
+EXCLUDED = {'PAXG/USD'}  # Only PAXG excluded (gold stablecoin, can't profit with 0.2% fees)
 
 # ── Config ──
 TICK_INTERVAL = 10
@@ -503,9 +502,10 @@ def check_exits(td):
         sell = False
         reason = ''
 
-        # Min hold: only hard stop
+        # FIX 3: Min hold — wider hard stop (2x ATR instead of 1.5x)
+        # Gives entries more room to develop before stopping out
         if pos['candle_count'] < MIN_HOLD_CANDLES:
-            hard = pos['entry'] - atr * 1.5
+            hard = pos['entry'] - atr * 2.0
             if px <= hard:
                 sell = True; reason = 'HARD_STOP'
             else:
@@ -763,8 +763,18 @@ def check_entries(td):
             best_chart = chart_bullish[0]
             chart_score = best_chart[1]  # pattern score (4-5)
 
+        # FIX 1: Chart pattern requires candle confirmation (>= 3)
+        # Without candle confirmation, chart patterns enter on bad timing → HARD stops
+        if best_chart and candle_score < 3:
+            best_chart = None
+            chart_score = 0
+
         # Combined score: candlestick + chart pattern bonus
         total_score = candle_score + chart_score
+
+        # FIX 5: Bear mode requires BOTH chart + candle >= 6
+        if regime == 'BEAR' and best_chart and candle_score < 6:
+            continue
 
         if total_score >= min_score:
             spread = float(info.get('MinAsk', 0)) - float(info.get('MaxBid', 0))
@@ -813,11 +823,11 @@ def check_entries(td):
             if ema_4h < ema_4h_prev:
                 continue
 
-        # ATR filter
+        # FIX 2: ATR filter raised to 0.5% (was 0.3% — too many dead trades)
         if len(cl) >= 14:
             atr = sum(_rng(x) for x in cl[-14:]) / 14
             atr_pct = atr / cl[-1]['c'] * 100
-            if atr_pct < 0.3:
+            if atr_pct < 0.5:
                 continue
 
         # Doji filter
@@ -915,16 +925,20 @@ def main():
     # Bootstrap from Binance
     log.info('Bootstrapping candle data from Binance...')
     COIN_TO_BINANCE = {
-        'SOL/USD':'SOLUSDT','BNB/USD':'BNBUSDT','AVAX/USD':'AVAXUSDT',
-        'LINK/USD':'LINKUSDT','FET/USD':'FETUSDT','SUI/USD':'SUIUSDT',
-        'NEAR/USD':'NEARUSDT','PENDLE/USD':'PENDLEUSDT','ADA/USD':'ADAUSDT',
-        'DOT/USD':'DOTUSDT','UNI/USD':'UNIUSDT','HBAR/USD':'HBARUSDT',
-        'AAVE/USD':'AAVEUSDT','CAKE/USD':'CAKEUSDT','DOGE/USD':'DOGEUSDT',
-        'FIL/USD':'FILUSDT','LTC/USD':'LTCUSDT','SEI/USD':'SEIUSDT',
-        'ARB/USD':'ARBUSDT','ENA/USD':'ENAUSDT','ONDO/USD':'ONDOUSDT',
-        'CRV/USD':'CRVUSDT','XLM/USD':'XLMUSDT','TRX/USD':'TRXUSDT',
-        'CFX/USD':'CFXUSDT','APT/USD':'APTUSDT','ICP/USD':'ICPUSDT',
-        'BTC/USD':'BTCUSDT',  # for regime detection only
+        # Major coins
+        'BTC/USD':'BTCUSDT','ETH/USD':'ETHUSDT','SOL/USD':'SOLUSDT','BNB/USD':'BNBUSDT',
+        'XRP/USD':'XRPUSDT','AVAX/USD':'AVAXUSDT','LINK/USD':'LINKUSDT','FET/USD':'FETUSDT',
+        'TAO/USD':'TAOUSDT','APT/USD':'APTUSDT','SUI/USD':'SUIUSDT','NEAR/USD':'NEARUSDT',
+        'WIF/USD':'WIFUSDT','PENDLE/USD':'PENDLEUSDT','ADA/USD':'ADAUSDT','DOT/USD':'DOTUSDT',
+        'UNI/USD':'UNIUSDT','HBAR/USD':'HBARUSDT','ARB/USD':'ARBUSDT','EIGEN/USD':'EIGENUSDT',
+        'ENA/USD':'ENAUSDT','CAKE/USD':'CAKEUSDT','CFX/USD':'CFXUSDT','CRV/USD':'CRVUSDT',
+        'FIL/USD':'FILUSDT','TRUMP/USD':'TRUMPUSDT','ONDO/USD':'ONDOUSDT','WLD/USD':'WLDUSDT',
+        'AAVE/USD':'AAVEUSDT','ICP/USD':'ICPUSDT','LTC/USD':'LTCUSDT','XLM/USD':'XLMUSDT',
+        'TON/USD':'TONUSDT','TRX/USD':'TRXUSDT','SEI/USD':'SEIUSDT','DOGE/USD':'DOGEUSDT',
+        # Additional coins
+        'ZEC/USD':'ZECUSDT','ZEN/USD':'ZENUSDT','POL/USD':'POLUSDT','BIO/USD':'BIOUSDT',
+        'BONK/USD':'BONKUSDT','SHIB/USD':'SHIBUSDT','PEPE/USD':'PEPEUSDT','FLOKI/USD':'FLOKIUSDT',
+        '1000CHEEMS/USD':'1000CHEEMSUSDT',
     }
     bootstrapped = 0
     for pair, symbol in COIN_TO_BINANCE.items():
