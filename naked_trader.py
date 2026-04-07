@@ -752,19 +752,8 @@ def check_entries(td):
     if regime != 'BULL':
         return  # bear/chop = sit in cash
 
-    # ADX-based sizing: strong trend = bigger positions, same quality bar
-    if adx >= 35:  # strong bull — scale up
-        max_pos = MAX_POSITIONS + 1  # 5 positions
-        min_score = MIN_PATTERN_SCORE  # keep quality bar same
-        size_mult = 1.5
-    elif adx >= 25:  # normal bull
-        max_pos = MAX_POSITIONS  # 4 positions
-        min_score = MIN_PATTERN_SCORE
-        size_mult = 1.2
-    else:  # weak bull (ADX 20-25)
-        max_pos = MAX_POSITIONS - 1  # 3 positions
-        min_score = MIN_PATTERN_SCORE
-        size_mult = 0.8
+    max_pos = MAX_POSITIONS
+    min_score = MIN_PATTERN_SCORE
 
     if len(positions) >= max_pos:
         return
@@ -861,10 +850,9 @@ def check_entries(td):
         if _rng(cl[-1]) > 0 and _bs(cl[-1]) / _rng(cl[-1]) < 0.1:
             continue
 
-        # Cash check with ADX scaling
+        # Cash check
         available = get_cash()
         size = get_dynamic_size(total_score, regime)
-        size = int(size * size_mult)  # scale by trend strength
         if available < MIN_CASH_RESERVE + size:
             break
         size = min(size, (available - MIN_CASH_RESERVE) * 0.25)
