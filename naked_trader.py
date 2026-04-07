@@ -951,11 +951,10 @@ def main():
         'AVNT/USD': 'aventis-ai',
         'HEMI/USD': 'hemi',
         'VIRTUAL/USD': 'virtual-protocol',
-        'FORM/USD': 'binaryx',
+        'FORM/USD': 'formation-fi',
         'LINEA/USD': 'linea',
-        'EDEN/USD': 'eden-network',
-        'STO/USD': 'sto',
-        'PLUME/USD': 'plume-network',
+        'STO/USD': 'stakestone',
+        'PLUME/USD': 'plume',
     }
     cg_count = 0
     for pair, cg_id in COINGECKO_IDS.items():
