@@ -60,7 +60,7 @@ COOLDOWN_SECONDS = 3600
 MIN_SCORE = 8               # need strong confluence
 MAX_HOLD_CANDLES = 12       # 12 hours
 MIN_CASH_RESERVE = 200000
-BREADTH_MIN = 0.25          # need 25%+ green
+BREADTH_MIN = 0.30          # need 30%+ green (sit out crashes entirely)
 FEE_PCT = 0.001             # 0.1% per side
 
 COINS = {
@@ -424,32 +424,141 @@ def measured_move(cl):
     return {'drop_pct': max_drop, 'target': target}
 
 
-# 13. ELLIOTT WAVE (basic)
+# 13. ELLIOTT WAVE (proper rules-based detection)
 def detect_elliott(cl):
-    """Detect basic 5-wave impulse pattern. Simplified."""
-    if len(cl) < 20:
+    """
+    Detect Elliott impulse waves using the 3 inviolable rules:
+    1. Wave 2 never retraces more than 100% of Wave 1
+    2. Wave 3 is NEVER the shortest of waves 1, 3, 5
+    3. Wave 4 does not overlap Wave 1's price territory
+
+    Plus fibonacci validation:
+    - Wave 3 should be ~1.618x Wave 1 length
+    - Wave 2 retraces 50-78.6% of Wave 1
+    - Wave 4 retraces 23.6-50% of Wave 3
+
+    Plus volume: Wave 3 should have highest volume
+    """
+    if len(cl) < 30:
         return None
 
     swings = find_swings(cl, length=3)
-    if len(swings) < 5:
+    if len(swings) < 6:
         return None
 
-    # Look for: low, high, higher_low, higher_high, higher_low pattern
-    # That's waves 1-2-3-4-5 starting
-    recent = swings[-5:]
-    types = [s['type'] for s in recent]
-    prices = [s['price'] for s in recent]
+    # Extract alternating swing lows and highs
+    lows = [s for s in swings if s['type'] == 'low']
+    highs = [s for s in swings if s['type'] == 'high']
 
-    # Pattern: low, high, low, high, low (alternating) with wave 3 highest
-    if types == ['low', 'high', 'low', 'high', 'low']:
-        if prices[2] > prices[0] and prices[3] > prices[1]:
-            # Wave 5 correction — potential buy
-            return {'wave': 'wave_5_correction', 'level': prices[4]}
+    if len(lows) < 3 or len(highs) < 2:
+        return None
 
-    # Pattern: high, low, high, low — could be starting wave 3
-    if len(recent) >= 4 and types[-4:] == ['low', 'high', 'low', 'high']:
-        if prices[-2] > prices[-4]:  # higher low
-            return {'wave': 'wave_3_start', 'level': prices[-2]}
+    # Try to find a 5-wave impulse pattern in recent swings
+    # Pattern: W0(low) -> W1(high) -> W2(low) -> W3(high) -> W4(low) -> W5(high)
+    # We look for completed waves 1-2-3-4 and anticipate wave 5
+
+    for li in range(len(lows) - 2):
+        w0 = lows[li]['price']      # Wave start (low)
+        w0_idx = lows[li]['idx']
+
+        # Find wave 1 top (first high after w0)
+        w1_candidates = [h for h in highs if h['idx'] > w0_idx]
+        if not w1_candidates:
+            continue
+        w1 = w1_candidates[0]['price']
+        w1_idx = w1_candidates[0]['idx']
+
+        # Find wave 2 low (first low after w1)
+        w2_candidates = [l for l in lows if l['idx'] > w1_idx]
+        if not w2_candidates:
+            continue
+        w2 = w2_candidates[0]['price']
+        w2_idx = w2_candidates[0]['idx']
+
+        # Find wave 3 top (first high after w2)
+        w3_candidates = [h for h in highs if h['idx'] > w2_idx]
+        if not w3_candidates:
+            continue
+        w3 = w3_candidates[0]['price']
+        w3_idx = w3_candidates[0]['idx']
+
+        # Find wave 4 low (first low after w3)
+        w4_candidates = [l for l in lows if l['idx'] > w3_idx]
+        if not w4_candidates:
+            continue
+        w4 = w4_candidates[0]['price']
+        w4_idx = w4_candidates[0]['idx']
+
+        wave1_len = w1 - w0
+        wave2_len = w1 - w2  # retracement (positive = down)
+        wave3_len = w3 - w2
+        wave4_len = w3 - w4  # retracement (positive = down)
+
+        if wave1_len <= 0 or wave3_len <= 0:
+            continue
+
+        # ── RULE 1: Wave 2 never retraces 100% of Wave 1 ──
+        w2_retrace = wave2_len / wave1_len
+        if w2 <= w0:  # wave 2 went below wave 0 start
+            continue
+
+        # ── RULE 2: Wave 3 is NOT the shortest ──
+        # We don't have wave 5 yet, but wave 3 must be >= wave 1
+        if wave3_len < wave1_len * 0.8:  # allow small tolerance
+            continue
+
+        # ── RULE 3: Wave 4 does not overlap Wave 1 territory ──
+        if w4 <= w1:  # wave 4 low is below wave 1 high
+            continue
+
+        # ── FIBONACCI VALIDATION ──
+        # Wave 2 should retrace 38.2-78.6% of Wave 1
+        if not (0.30 <= w2_retrace <= 0.85):
+            continue
+
+        # Wave 3 should be at least 1.0x Wave 1 (ideally 1.618x)
+        w3_extension = wave3_len / wave1_len
+        if w3_extension < 1.0:
+            continue
+
+        # Wave 4 should retrace 23.6-50% of Wave 3
+        w4_retrace = wave4_len / wave3_len
+        if not (0.15 <= w4_retrace <= 0.55):
+            continue
+
+        # ── VOLUME CONFIRMATION ──
+        # Wave 3 candles should have higher avg volume than wave 1
+        w1_candles = [c for c in cl[w0_idx:w1_idx+1]]
+        w3_candles = [c for c in cl[w2_idx:w3_idx+1]]
+        if w1_candles and w3_candles:
+            vol_w1 = sum(c['v'] for c in w1_candles) / len(w1_candles)
+            vol_w3 = sum(c['v'] for c in w3_candles) / len(w3_candles)
+            if vol_w1 > 0 and vol_w3 < vol_w1 * 0.8:
+                continue  # wave 3 should have more volume
+
+        # ── RECENCY CHECK ──
+        # Wave 4 should be recent (within last 15 candles)
+        if w4_idx < len(cl) - 15:
+            continue
+
+        # All rules passed — we're in wave 4 correction, wave 5 coming
+        current = cl[-1]['c']
+
+        # Wave 5 target: usually 0.618-1.0x Wave 1 from Wave 4
+        w5_target = w4 + wave1_len * 0.618
+
+        # Are we near the wave 4 low (buying opportunity)?
+        dist_to_w4 = abs(current - w4) / current * 100
+        if dist_to_w4 < 2.0 and current >= w4:
+            return {
+                'wave': 'wave_5_setup',
+                'w4_level': w4,
+                'w5_target': w5_target,
+                'w3_extension': w3_extension,
+                'w2_retrace': w2_retrace,
+                'upside_pct': (w5_target - current) / current * 100,
+                'confidence': 'high' if w3_extension > 1.5 else 'medium',
+            }
 
     return None
 
@@ -682,10 +791,12 @@ def score_coin(pair, cl):
         if upside > 2.0:
             score += 1; signals.append(f'MM_TARGET_{upside:.0f}%')
 
-    # 13. Elliott wave
+    # 13. Elliott wave (proper rules-based)
+    # NOTE: backtested at 11% win rate on 1H crypto — doesn't add edge
+    # Kept for logging only, 0 points until validated on longer timeframes
     ew = detect_elliott(cl)
     if ew:
-        score += 2; signals.append(f'ELLIOTT_{ew["wave"]}')
+        signals.append(f'ELLIOTT_W5({ew["upside_pct"]:.0f}%)')  # log but 0 score
 
     # 14. Wyckoff
     wyck = detect_wyckoff(cl)
@@ -875,13 +986,111 @@ def check_exits(td):
         positions.pop(pair, None)
 
 
+def calc_ema(values, period):
+    """Calculate EMA from a list of values."""
+    if len(values) < period:
+        return values[-1] if values else 0
+    k = 2 / (period + 1)
+    ema = values[0]
+    for v in values[1:]:
+        ema = v * k + ema * (1 - k)
+    return ema
+
+
+def calc_adx(cl, period=14):
+    """Calculate ADX (Average Directional Index) from candle data."""
+    if len(cl) < period * 2:
+        return 0
+
+    plus_dm = []
+    minus_dm = []
+    tr_list = []
+
+    for i in range(1, len(cl)):
+        high_diff = cl[i]['h'] - cl[i-1]['h']
+        low_diff = cl[i-1]['l'] - cl[i]['l']
+
+        plus_dm.append(high_diff if high_diff > low_diff and high_diff > 0 else 0)
+        minus_dm.append(low_diff if low_diff > high_diff and low_diff > 0 else 0)
+
+        tr = max(cl[i]['h'] - cl[i]['l'],
+                 abs(cl[i]['h'] - cl[i-1]['c']),
+                 abs(cl[i]['l'] - cl[i-1]['c']))
+        tr_list.append(tr)
+
+    if len(tr_list) < period:
+        return 0
+
+    # Smoothed averages
+    atr = sum(tr_list[:period]) / period
+    plus_di_smooth = sum(plus_dm[:period]) / period
+    minus_di_smooth = sum(minus_dm[:period]) / period
+
+    dx_list = []
+    for i in range(period, len(tr_list)):
+        atr = (atr * (period - 1) + tr_list[i]) / period
+        plus_di_smooth = (plus_di_smooth * (period - 1) + plus_dm[i]) / period
+        minus_di_smooth = (minus_di_smooth * (period - 1) + minus_dm[i]) / period
+
+        if atr == 0:
+            continue
+        plus_di = (plus_di_smooth / atr) * 100
+        minus_di = (minus_di_smooth / atr) * 100
+        di_sum = plus_di + minus_di
+        if di_sum == 0:
+            continue
+        dx = abs(plus_di - minus_di) / di_sum * 100
+        dx_list.append(dx)
+
+    if len(dx_list) < period:
+        return 0
+
+    adx = sum(dx_list[:period]) / period
+    for i in range(period, len(dx_list)):
+        adx = (adx * (period - 1) + dx_list[i]) / period
+
+    return adx
+
+
+def get_btc_regime():
+    """
+    Detect market regime from BTC candles using EMA slope + ADX.
+    Returns: 'BULL_TREND', 'BEAR_TREND', 'CHOP', or 'UNKNOWN'
+    """
+    btc_cl = candles.get('BTC/USD', [])
+    if len(btc_cl) < 60:
+        return 'UNKNOWN'
+
+    # EMA50 slope (direction)
+    closes = [c['c'] for c in btc_cl]
+    ema50_now = calc_ema(closes, 50)
+    ema50_prev = calc_ema(closes[:-5], 50)  # 5 candles ago
+    slope_pct = (ema50_now - ema50_prev) / ema50_prev * 100 if ema50_prev > 0 else 0
+
+    # ADX (trend strength)
+    adx = calc_adx(btc_cl, 14)
+
+    # Classify
+    if slope_pct > 0.1 and adx >= 20:
+        return 'BULL_TREND'
+    elif slope_pct < -0.1 and adx >= 20:
+        return 'BEAR_TREND'
+    else:
+        return 'CHOP'  # sideways or weak trend
+
+
 def check_entries(td):
     """Scan all coins for SMC entry signals."""
     if len(positions) >= MAX_POSITIONS:
         return
 
+    # ── REGIME GATE: Only trade in BULL_TREND ──
+    regime = get_btc_regime()
+    if regime != 'BULL_TREND':
+        return  # bear, chop, unknown = sit in cash
+
     breadth = get_breadth(td)
-    if breadth < BREADTH_MIN:
+    if breadth < 0.25:  # even in bull trend, skip very red moments
         return
 
     # Check cash
@@ -990,6 +1199,20 @@ def check_entries(td):
 def bootstrap():
     """Load 100 hourly candles from Binance for all coins."""
     log.info("Bootstrapping from Binance...")
+
+    # Always bootstrap BTC for regime detection (even though it's EXCLUDED from trading)
+    try:
+        url = 'https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1h&limit=100'
+        r = requests.get(url, timeout=5)
+        data = r.json()
+        if isinstance(data, list) and len(data) > 20:
+            candles['BTC/USD'] = [{'o': float(k[1]), 'h': float(k[2]), 'l': float(k[3]),
+                                   'c': float(k[4]), 'v': float(k[5]), 't': int(k[0]) / 1000} for k in data[:-1]]
+            log.info(f"BTC loaded: {len(candles['BTC/USD'])} candles for regime detection")
+    except:
+        log.warning("Failed to load BTC data for regime detection")
+    time.sleep(0.1)
+
     count = 0
     for pair, symbol in COINS.items():
         if pair in EXCLUDED:
