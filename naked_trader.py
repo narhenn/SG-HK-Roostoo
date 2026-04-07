@@ -173,7 +173,8 @@ def update_candles(td):
 
 
 # ══════════════════════════════════════════════════════
-#  PATTERN DETECTION — 35 patterns
+#  SMC ANALYSIS ENGINE — 16 techniques (from smc_trader.py)
+#  Replaces broken pattern detection with correct implementations
 # ══════════════════════════════════════════════════════
 
 def _b(c): return c['c'] - c['o']
@@ -185,25 +186,327 @@ def _lw(c): return min(c['o'], c['c']) - c['l']
 def _rng(c): return c['h'] - c['l']
 
 
+# ── SMC 1: Fair Value Gaps (correct implementation) ──
+def find_fvg(cl):
+    gaps = []
+    for i in range(2, len(cl)):
+        if cl[i-2]['h'] < cl[i]['l']:
+            gaps.append({'type':'bull','top':cl[i]['l'],'bottom':cl[i-2]['h'],'idx':i,'filled':False})
+        if cl[i-2]['l'] > cl[i]['h']:
+            gaps.append({'type':'bear','top':cl[i-2]['l'],'bottom':cl[i]['h'],'idx':i,'filled':False})
+    for g in gaps:
+        for j in range(g['idx']+1, len(cl)):
+            if g['type']=='bull' and cl[j]['l']<=g['bottom']: g['filled']=True; break
+            if g['type']=='bear' and cl[j]['h']>=g['top']: g['filled']=True; break
+    return [g for g in gaps if not g['filled']]
+
+
+# ── SMC 2: Order Blocks (1%+ move, correct) ──
+def find_order_blocks(cl):
+    obs = []
+    for i in range(1, len(cl)-1):
+        move = (cl[i+1]['c']-cl[i+1]['o'])/cl[i]['c']*100 if cl[i]['c']>0 else 0
+        if _rd(cl[i]) and move > 1.0:
+            obs.append({'type':'bull','top':cl[i]['o'],'bottom':cl[i]['c'],'idx':i,'mitigated':False})
+        if _gr(cl[i]) and move < -1.0:
+            obs.append({'type':'bear','top':cl[i]['c'],'bottom':cl[i]['o'],'idx':i,'mitigated':False})
+    for ob in obs:
+        for j in range(ob['idx']+2, len(cl)):
+            if ob['type']=='bull' and cl[j]['l']<=ob['bottom']: ob['mitigated']=True; break
+            if ob['type']=='bear' and cl[j]['h']>=ob['top']: ob['mitigated']=True; break
+    return [ob for ob in obs if not ob['mitigated']]
+
+
+# ── SMC 3: Swing Highs and Lows ──
+def find_swings(cl, length=5):
+    swings = []
+    for i in range(length, len(cl)-length):
+        is_high = all(cl[i]['h']>=cl[i+j]['h'] and cl[i]['h']>=cl[i-j]['h']
+                      for j in range(1,length+1) if i+j<len(cl) and i-j>=0)
+        is_low = all(cl[i]['l']<=cl[i+j]['l'] and cl[i]['l']<=cl[i-j]['l']
+                     for j in range(1,length+1) if i+j<len(cl) and i-j>=0)
+        if is_high: swings.append({'type':'high','price':cl[i]['h'],'idx':i})
+        if is_low: swings.append({'type':'low','price':cl[i]['l'],'idx':i})
+    return swings
+
+
+# ── SMC 4: BOS ──
+def detect_bos(swings):
+    if len(swings)<3: return None
+    recent=swings[-3:]
+    highs=[s for s in recent if s['type']=='high']
+    lows=[s for s in recent if s['type']=='low']
+    if len(highs)>=2 and highs[-1]['price']>highs[-2]['price']: return 'bullish_bos'
+    if len(lows)>=2 and lows[-1]['price']<lows[-2]['price']: return 'bearish_bos'
+    return None
+
+
+# ── SMC 5: CHoCH (uses swing highs, not all highs) ──
+def detect_choch(swings):
+    if len(swings)<4: return None
+    highs=[s for s in swings if s['type']=='high']
+    if len(highs)>=3:
+        if highs[-3]['price']>highs[-2]['price'] and highs[-1]['price']>highs[-2]['price']:
+            return 'bullish_choch'
+        if highs[-3]['price']<highs[-2]['price'] and highs[-1]['price']<highs[-2]['price']:
+            return 'bearish_choch'
+    return None
+
+
+# ── SMC 6: Liquidity Sweep ──
+def detect_liquidity_sweep(cl, swings):
+    if len(cl)<3 or len(swings)<2: return None
+    current=cl[-1]; prev=cl[-2]
+    recent_lows=[s for s in swings if s['type']=='low' and s['idx']<len(cl)-2]
+    if not recent_lows: return None
+    last_low=recent_lows[-1]
+    if prev['l']<last_low['price'] and current['c']>last_low['price'] and _gr(current):
+        return {'type':'bull_sweep','level':last_low['price']}
+    return None
+
+
+# ── SMC 7: Market Structure ──
+def analyze_structure(swings):
+    if len(swings)<4: return 'unknown'
+    highs=[s for s in swings if s['type']=='high'][-3:]
+    lows=[s for s in swings if s['type']=='low'][-3:]
+    hh=len(highs)>=2 and highs[-1]['price']>highs[-2]['price']
+    hl=len(lows)>=2 and lows[-1]['price']>lows[-2]['price']
+    lh=len(highs)>=2 and highs[-1]['price']<highs[-2]['price']
+    ll=len(lows)>=2 and lows[-1]['price']<lows[-2]['price']
+    if hh and hl: return 'bullish'
+    if lh and ll: return 'bearish'
+    return 'ranging'
+
+
+# ── SMC 8: Fibonacci ──
+def fib_analysis(cl, swings):
+    if len(cl)<10 or len(swings)<2: return None, 999
+    highs=[s for s in swings if s['type']=='high']
+    lows=[s for s in swings if s['type']=='low']
+    if not highs or not lows: return None, 999
+    rh=max(s['price'] for s in highs[-3:]); rl=min(s['price'] for s in lows[-3:])
+    if rh<=rl: return None, 999
+    diff=rh-rl; current=cl[-1]['c']
+    fibs={0.236:rl+diff*0.236, 0.382:rl+diff*0.382, 0.500:rl+diff*0.500, 0.618:rl+diff*0.618, 0.786:rl+diff*0.786}
+    nearest=None; ndist=999
+    for level,price in fibs.items():
+        dist=abs(current-price)/current*100
+        if dist<ndist: ndist=dist; nearest=level
+    return nearest, ndist
+
+
+# ── SMC 9: Support/Resistance ──
+def find_sr_levels(cl, n=3):
+    if len(cl)<15: return [], []
+    def cluster(prices, threshold_pct=0.5):
+        if not prices: return []
+        prices=sorted(prices); clusters=[]; current=[prices[0]]
+        for p in prices[1:]:
+            if (p-current[0])/current[0]*100<threshold_pct: current.append(p)
+            else:
+                if len(current)>=2: clusters.append({'level':sum(current)/len(current),'touches':len(current)})
+                current=[p]
+        if len(current)>=2: clusters.append({'level':sum(current)/len(current),'touches':len(current)})
+        return sorted(clusters, key=lambda x:x['touches'], reverse=True)[:n]
+    return cluster([c['l'] for c in cl]), cluster([c['h'] for c in cl])
+
+
+# ── SMC 10: Supply/Demand Zones ──
+def find_supply_demand(cl):
+    zones=[]
+    for i in range(2, len(cl)-2):
+        move=(cl[i+1]['c']-cl[i]['c'])/cl[i]['c']*100 if cl[i]['c']>0 else 0
+        if move>1.5:
+            zones.append({'type':'demand','top':max(cl[i]['o'],cl[i]['c']),'bottom':min(cl[i]['o'],cl[i]['c']),'idx':i})
+        if move<-1.5:
+            zones.append({'type':'supply','top':max(cl[i]['o'],cl[i]['c']),'bottom':min(cl[i]['o'],cl[i]['c']),'idx':i})
+    fresh=[]
+    for z in zones:
+        revisited=False
+        for j in range(z['idx']+2, len(cl)):
+            if z['type']=='demand' and cl[j]['l']<=z['bottom']: revisited=True; break
+            if z['type']=='supply' and cl[j]['h']>=z['top']: revisited=True; break
+        if not revisited: fresh.append(z)
+    return fresh
+
+
+# ── SMC 11: Wyckoff ──
+def detect_wyckoff(cl):
+    if len(cl)<20: return None
+    window=cl[-15:-2]
+    h=max(c['h'] for c in window); l=min(c['l'] for c in window)
+    range_pct=(h-l)/l*100 if l>0 else 99
+    if range_pct>4.0: return None
+    if cl[-2]['l']<l and cl[-1]['c']>l and _gr(cl[-1]):
+        return {'type':'spring','range_low':l,'range_high':h}
+    if cl[-1]['c']>h and _gr(cl[-1]) and _bs(cl[-1])>_rng(cl[-1])*0.5:
+        return {'type':'markup','range_high':h}
+    return None
+
+
+# ── EMA helper ──
+def calc_ema(values, period):
+    if len(values)<period: return values[-1] if values else 0
+    k=2/(period+1); ema=values[0]
+    for v in values[1:]: ema=v*k+ema*(1-k)
+    return ema
+
+
+# ── ADX for regime ──
+def calc_adx(cl, period=14):
+    if len(cl)<period*2: return 0
+    plus_dm=[]; minus_dm=[]; tr_list=[]
+    for i in range(1,len(cl)):
+        hd=cl[i]['h']-cl[i-1]['h']; ld=cl[i-1]['l']-cl[i]['l']
+        plus_dm.append(hd if hd>ld and hd>0 else 0)
+        minus_dm.append(ld if ld>hd and ld>0 else 0)
+        tr_list.append(max(cl[i]['h']-cl[i]['l'],abs(cl[i]['h']-cl[i-1]['c']),abs(cl[i]['l']-cl[i-1]['c'])))
+    if len(tr_list)<period: return 0
+    atr=sum(tr_list[:period])/period
+    pds=sum(plus_dm[:period])/period; mds=sum(minus_dm[:period])/period
+    dx_list=[]
+    for i in range(period,len(tr_list)):
+        atr=(atr*(period-1)+tr_list[i])/period
+        pds=(pds*(period-1)+plus_dm[i])/period; mds=(mds*(period-1)+minus_dm[i])/period
+        if atr==0: continue
+        pdi=(pds/atr)*100; mdi=(mds/atr)*100; di_sum=pdi+mdi
+        if di_sum==0: continue
+        dx_list.append(abs(pdi-mdi)/di_sum*100)
+    if len(dx_list)<period: return 0
+    adx=sum(dx_list[:period])/period
+    for i in range(period,len(dx_list)): adx=(adx*(period-1)+dx_list[i])/period
+    return adx
+
+
+# ══════════════════════════════════════════════════════
+#  REGIME DETECTION — EMA slope + ADX + Breadth
+# ══════════════════════════════════════════════════════
+
 def detect_regime(pair='BTC/USD'):
-    """BULL unless BTC below EMA20 AND (RSI<40 or 3h drop > 0.5%)"""
+    """BTC EMA50 slope + ADX for trend strength + breadth."""
     cl = list(candles.get(pair, []))
-    if len(cl) < 20: return 'BULL'
+    if len(cl) < 60: return 'BULL'  # default bull if not enough data
+
     closes = [c['c'] for c in cl]
-    ema20 = sum(closes[-20:]) / 20
-    px = closes[-1]
-    # RSI
-    deltas = [closes[i] - closes[i-1] for i in range(-14, 0)]
-    gains = [d for d in deltas if d > 0]
-    losses = [-d for d in deltas if d < 0]
-    avg_g = sum(gains) / 14 if gains else 0.001
-    avg_l = sum(losses) / 14 if losses else 0.001
-    rsi = 100 - 100 / (1 + avg_g / avg_l)
-    # 3h change
-    chg3 = (closes[-1] - closes[-4]) / closes[-4] * 100 if len(closes) >= 4 else 0
-    if px < ema20 and (rsi < 40 or chg3 < -0.5):
+    ema50_now = calc_ema(closes, 50)
+    ema50_prev = calc_ema(closes[:-5], 50)
+    slope_pct = (ema50_now - ema50_prev) / ema50_prev * 100 if ema50_prev > 0 else 0
+    adx = calc_adx(cl, 14)
+
+    if slope_pct > 0.1 and adx >= 20:
+        return 'BULL'
+    elif slope_pct < -0.1 and adx >= 20:
         return 'BEAR'
-    return 'BULL'
+    else:
+        return 'CHOP'
+
+
+# ══════════════════════════════════════════════════════
+#  UNIFIED SCORER — SMC + Candlestick combined
+# ══════════════════════════════════════════════════════
+
+def detect_patterns(pair):
+    """Combined SMC + candlestick scoring. Returns (score, pattern_name)."""
+    cl = list(candles.get(pair, []))
+    if len(cl) < 10: return 0, ''
+
+    score = 0
+    patterns = []
+    c = cl[-1]; p = cl[-2] if len(cl) >= 2 else c
+    n = len(cl)
+    current = c['c']
+
+    # Averages
+    bodies = [_bs(x) for x in cl[-14:]]
+    ranges_list = [_rng(x) for x in cl[-14:]]
+    avg_body = sum(bodies) / len(bodies) if bodies else 0.0001
+    avg_range = sum(ranges_list) / len(ranges_list) if ranges_list else 0.0001
+    if avg_body == 0: avg_body = 0.0001
+    if avg_range == 0: avg_range = 0.0001
+    bs = _bs(c); rng = _rng(c); bs_p = _bs(p)
+
+    # ═══ CANDLESTICK PATTERNS (proven 10 from V7) ═══
+    if _rd(p) and _gr(c) and c['o']<=p['c'] and c['c']>=p['o'] and bs>bs_p*1.2:
+        score+=3; patterns.append('ENGULF')
+    if rng>0 and bs>0 and _lw(c)>=bs*2 and _uw(c)<=bs*0.5 and _gr(c):
+        score+=3; patterns.append('HAMMER')
+    if n>=3:
+        b1,b2,b3=_bs(cl[-3]),_bs(cl[-2]),_bs(cl[-1])
+        if _rd(cl[-3]) and b1>avg_body and b2<b1*0.3 and _gr(cl[-1]) and b3>avg_body and cl[-1]['c']>(cl[-3]['o']+cl[-3]['c'])/2:
+            score+=4; patterns.append('MSTAR')
+    if _rd(p) and _gr(c):
+        mid=(p['o']+p['c'])/2
+        if c['o']<p['c'] and c['c']>mid and c['c']<p['o']: score+=3; patterns.append('PIERCE')
+    if n>=2 and avg_range>0 and abs(c['l']-p['l'])/avg_range<0.05 and _rd(p) and _gr(c):
+        score+=3; patterns.append('TWZR')
+    if n>=3 and _gr(cl[-3]) and _gr(cl[-2]) and _gr(cl[-1]) and cl[-1]['c']>cl[-2]['c']>cl[-3]['c']:
+        score+=3; patterns.append('3WS')
+    if n>=3 and cl[-2]['h']<=cl[-3]['h'] and cl[-2]['l']>=cl[-3]['l'] and cl[-1]['c']>cl[-3]['h'] and _gr(cl[-1]):
+        score+=3; patterns.append('INSIDE')
+    if n>=5 and cl[-2]['l']>cl[-4]['l'] and cl[-1]['h']>cl[-3]['h'] and _gr(cl[-1]):
+        score+=2; patterns.append('HHHL')
+    if _gr(c) and bs>avg_body*2 and _uw(c)<bs*0.1 and _lw(c)<bs*0.1:
+        score+=3; patterns.append('MARU')
+    if n>=6 and (cl[-1]['c']-cl[-6]['c'])/cl[-6]['c']*100>=1.0:
+        score+=2; patterns.append('MOM')
+
+    # ═══ SMC TECHNIQUES (correct implementations) ═══
+
+    # Swings & Structure
+    swings = find_swings(cl, length=3)
+    structure = analyze_structure(swings)
+    if structure == 'bullish': score+=2; patterns.append('BULL_STRUCT')
+    elif structure == 'bearish': score-=3
+
+    # BOS
+    bos = detect_bos(swings)
+    if bos == 'bullish_bos': score+=2; patterns.append('BOS')
+
+    # CHoCH
+    choch = detect_choch(swings)
+    if choch == 'bullish_choch': score+=3; patterns.append('CHoCH')
+
+    # FVG — price inside unfilled gap
+    fvgs = find_fvg(cl)
+    for f in [f for f in fvgs if f['type']=='bull']:
+        if f['bottom']<=current<=f['top']: score+=2; patterns.append('IN_FVG'); break
+        if current<f['bottom'] and (f['bottom']-current)/current*100<1.0: score+=1; patterns.append('NEAR_FVG'); break
+
+    # Order Blocks — price at institutional entry
+    obs = find_order_blocks(cl)
+    for ob in [ob for ob in obs if ob['type']=='bull']:
+        if ob['bottom']<=current<=ob['top']: score+=3; patterns.append('IN_OB'); break
+        if current<ob['top'] and (ob['top']-current)/current*100<1.0: score+=1; patterns.append('NEAR_OB'); break
+
+    # Liquidity Sweep
+    sweep = detect_liquidity_sweep(cl, swings)
+    if sweep and sweep['type']=='bull_sweep': score+=3; patterns.append('LIQ_SWEEP')
+
+    # Fibonacci
+    fib_level, fib_dist = fib_analysis(cl, swings)
+    if fib_level in (0.618, 0.786) and fib_dist<1.0: score+=3; patterns.append(f'FIB_{fib_level}')
+    elif fib_level==0.500 and fib_dist<1.0: score+=2; patterns.append('FIB_0.5')
+
+    # S/R
+    supports, _ = find_sr_levels(cl)
+    for s in supports:
+        dist=(current-s['level'])/current*100
+        if -0.5<dist<=0: score+=3; patterns.append('AT_SUP'); break
+        if 0<dist<1.5: score+=2; patterns.append('NEAR_SUP'); break
+
+    # Supply/Demand
+    for z in [z for z in find_supply_demand(cl) if z['type']=='demand']:
+        if z['bottom']<=current<=z['top']: score+=2; patterns.append('IN_DEMAND'); break
+
+    # Wyckoff
+    wyck = detect_wyckoff(cl)
+    if wyck:
+        if wyck['type']=='spring': score+=3; patterns.append('WYCKOFF_SPRING')
+        elif wyck['type']=='markup': score+=2; patterns.append('WYCKOFF_MARKUP')
+
+    pattern_name = '+'.join(patterns) if patterns else 'NONE'
+    return score, pattern_name
 
 
 def detect_patterns(pair):
