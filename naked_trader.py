@@ -460,6 +460,71 @@ def detect_patterns(pair):
     if rng > 0 and bs / rng > 0.6 and _gr(c):
         score += 1; patterns.append('STRONG')
 
+    # ═══ NEW: TREND + MOMENTUM PATTERNS (fire in green markets) ═══
+
+    # 36. Mean Reversion: 3+ red candles then green = oversold bounce
+    if n >= 4:
+        reds = sum(1 for x in cl[-4:-1] if _rd(x))
+        if reds >= 3 and _gr(c):
+            score += 3; patterns.append('MEAN_REV')
+
+    # 37. God Candle: body > 3x average = institutional buying
+    if _gr(c) and bs > avg_body * 3:
+        score += 3; patterns.append('GOD_CANDLE')
+
+    # 38. Outside Bar Bullish: engulfs both high and low of prev, closes green
+    if n >= 2 and c['h'] > p['h'] and c['l'] < p['l'] and _gr(c):
+        score += 3; patterns.append('OUTSIDE_BAR')
+
+    # 39. Rally-Base-Rally: 2+ green, 1 small candle, then green again
+    if n >= 4:
+        if _gr(cl[-4]) and _gr(cl[-3]):  # rally
+            base_body = _bs(cl[-2])
+            if base_body < avg_body * 0.5:  # small base
+                if _gr(cl[-1]) and _bs(cl[-1]) > avg_body:  # rally continues
+                    score += 3; patterns.append('RBR')
+
+    # 40. Trend Follow: green candle closing above SMA20
+    if n >= 20:
+        sma20 = sum(x['c'] for x in cl[-20:]) / 20
+        if _gr(c) and c['c'] > sma20 and c['o'] < sma20:
+            # Crossed above SMA20 this candle
+            score += 3; patterns.append('SMA_CROSS')
+        elif _gr(c) and c['c'] > sma20 and bs > avg_body:
+            # Strong green above SMA20
+            score += 2; patterns.append('ABOVE_SMA')
+
+    # 41. Breakout: new 24-bar high
+    if n >= 24:
+        prev_high = max(x['h'] for x in cl[-25:-1])
+        if c['c'] > prev_high and _gr(c):
+            score += 3; patterns.append('BREAKOUT_24H')
+
+    # 42. Gap Up Open: opened above previous candle's high
+    if n >= 2 and c['o'] > p['h'] and _gr(c):
+        score += 2; patterns.append('GAP_UP')
+
+    # 43. Consecutive Higher Lows: 3+ candles each with higher low
+    if n >= 4:
+        if cl[-1]['l'] > cl[-2]['l'] > cl[-3]['l'] > cl[-4]['l']:
+            if _gr(c):
+                score += 2; patterns.append('HIGHER_LOWS')
+
+    # 44. Pin Bar at support: long lower wick rejecting a level
+    if n >= 20 and rng > 0:
+        support = min(x['l'] for x in cl[-20:])
+        if _lw(c) > rng * 0.6 and abs(c['l'] - support) / support * 100 < 0.5:
+            score += 3; patterns.append('PIN_SUPPORT')
+
+    # 45. Bollinger Band bounce: price near lower band + green
+    if n >= 20:
+        closes_list = [x['c'] for x in cl[-20:]]
+        sma = sum(closes_list) / 20
+        std = (sum((x - sma)**2 for x in closes_list) / 20) ** 0.5
+        lower_bb = sma - 2 * std
+        if c['l'] <= lower_bb * 1.005 and _gr(c):
+            score += 3; patterns.append('BB_BOUNCE')
+
     # ── FILTER: spread too wide ──
     if cl[-1].get('spread', 0) > 0.2:
         score = max(0, score - 5)
