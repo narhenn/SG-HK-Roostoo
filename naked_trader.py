@@ -64,6 +64,11 @@ import requests
 import numpy as np
 from collections import deque
 from roostoo_client import RoostooClient
+try:
+    from news_sentiment import score_sentiment, get_market_sentiment
+    _HAS_NEWS = True
+except ImportError:
+    _HAS_NEWS = False
 from config import TELEGRAM_TOKEN, TELEGRAM_CHAT_ID
 
 try:
@@ -819,6 +824,17 @@ def scan_chart_patterns(pair):
 def check_entries(td):
     regime = detect_regime()
 
+    # News sentiment can override regime
+    if _HAS_NEWS:
+        try:
+            market_sent = get_market_sentiment()
+            if market_sent <= -3:
+                regime = 'BEAR'  # very bearish news = force bear mode
+            elif market_sent >= 3 and regime != 'BULL':
+                regime = 'BULL'  # very bullish news = override to bull
+        except:
+            pass
+
     if regime == 'BULL':
         max_pos = MAX_POSITIONS
         min_score = MIN_PATTERN_SCORE
@@ -860,8 +876,18 @@ def check_entries(td):
             best_chart = chart_bullish[0]
             chart_score = best_chart[1]  # pattern score (4-5)
 
-        # Combined score: candlestick + chart pattern bonus
-        total_score = candle_score + chart_score
+        # Combined score: candlestick + chart pattern + news sentiment
+        news_score = 0
+        if _HAS_NEWS:
+            try:
+                ns, headlines = score_sentiment(pair)
+                news_score = ns  # -5 to +5
+                if ns < -2:
+                    continue  # strong bearish news = skip this coin entirely
+            except:
+                pass
+
+        total_score = candle_score + chart_score + max(0, news_score)
 
         if total_score >= min_score:
             spread = float(info.get('MinAsk', 0)) - float(info.get('MaxBid', 0))
