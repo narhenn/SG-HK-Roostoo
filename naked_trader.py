@@ -525,6 +525,39 @@ def detect_patterns(pair):
         if c['l'] <= lower_bb * 1.005 and _gr(c):
             score += 3; patterns.append('BB_BOUNCE')
 
+    # 46. Acceleration: each of last 3 candles has bigger body than previous
+    if n >= 3 and _gr(c) and _gr(cl[-2]):
+        if _bs(cl[-1]) > _bs(cl[-2]) > _bs(cl[-3]):
+            score += 2; patterns.append('ACCEL')
+
+    # 47. Reclaim: was below SMA20, now above = buyers took control
+    if n >= 21:
+        sma_prev = sum(x['c'] for x in cl[-21:-1]) / 20
+        sma_now = sum(x['c'] for x in cl[-20:]) / 20
+        if cl[-2]['c'] < sma_prev and c['c'] > sma_now:
+            score += 3; patterns.append('RECLAIM')
+
+    # 48. Tight Range Breakout: last 5 candles within 0.5% then green breaks out
+    if n >= 6:
+        tight = cl[-6:-1]
+        th = max(x['h'] for x in tight)
+        tl = min(x['l'] for x in tight)
+        if th > 0 and (th - tl) / th * 100 < 0.5:
+            if c['c'] > th and _gr(c):
+                score += 3; patterns.append('TIGHT_BRK')
+
+    # 49. Dip Buy: dropped 1%+ then recovered in same candle (long lower wick green)
+    if _gr(c) and rng > 0:
+        drop = (c['o'] - c['l']) / c['o'] * 100 if c['o'] > 0 else 0
+        if drop > 1.0 and _lw(c) > bs * 1.5:
+            score += 2; patterns.append('DIP_BUY')
+
+    # 50. Volume Climax Green: highest volume in 20 bars + green = big buyer
+    if n >= 20 and _gr(c):
+        max_vol = max(x.get('v', 0) for x in cl[-20:-1])
+        if c.get('v', 0) > max_vol and c.get('v', 0) > 0:
+            score += 2; patterns.append('VOL_CLIMAX')
+
     # ── FILTER: spread too wide ──
     if cl[-1].get('spread', 0) > 0.2:
         score = max(0, score - 5)
