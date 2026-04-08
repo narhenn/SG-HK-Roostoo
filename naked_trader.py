@@ -82,7 +82,7 @@ EXCLUDED = {'PAXG/USD'}  # Trade everything except gold stablecoin
 TICK_INTERVAL = 10
 CANDLE_SECONDS = 3600       # 1h candles
 MAX_POSITIONS = 4
-HARD_STOP_PCT = 0.015  # 1.5% (was 0.5% — noise on 1H candles)
+HARD_STOP_PCT = 0.005
 TRAIL_STOP_PCT = 0.020
 PROFIT_TRAIL_PCT = 0.01     # 1% trail
 COOLDOWN_SECONDS = 3600
@@ -185,53 +185,25 @@ def _lw(c): return min(c['o'], c['c']) - c['l']
 def _rng(c): return c['h'] - c['l']
 
 
-def _calc_ema(values, period):
-    if len(values) < period: return values[-1] if values else 0
-    k = 2 / (period + 1)
-    ema = values[0]
-    for v in values[1:]: ema = v * k + ema * (1 - k)
-    return ema
-
-def _calc_adx(cl, period=14):
-    if len(cl) < period * 2: return 0
-    plus_dm, minus_dm, tr_list = [], [], []
-    for i in range(1, len(cl)):
-        hd = cl[i]['h'] - cl[i-1]['h']; ld = cl[i-1]['l'] - cl[i]['l']
-        plus_dm.append(hd if hd > ld and hd > 0 else 0)
-        minus_dm.append(ld if ld > hd and ld > 0 else 0)
-        tr_list.append(max(cl[i]['h']-cl[i]['l'], abs(cl[i]['h']-cl[i-1]['c']), abs(cl[i]['l']-cl[i-1]['c'])))
-    if len(tr_list) < period: return 0
-    atr = sum(tr_list[:period])/period
-    pdi_s = sum(plus_dm[:period])/period
-    mdi_s = sum(minus_dm[:period])/period
-    dx_list = []
-    for i in range(period, len(tr_list)):
-        atr = (atr*(period-1)+tr_list[i])/period
-        pdi_s = (pdi_s*(period-1)+plus_dm[i])/period
-        mdi_s = (mdi_s*(period-1)+minus_dm[i])/period
-        if atr == 0: continue
-        pdi = (pdi_s/atr)*100; mdi = (mdi_s/atr)*100
-        di_sum = pdi+mdi
-        if di_sum == 0: continue
-        dx_list.append(abs(pdi-mdi)/di_sum*100)
-    if len(dx_list) < period: return 0
-    adx = sum(dx_list[:period])/period
-    for i in range(period, len(dx_list)):
-        adx = (adx*(period-1)+dx_list[i])/period
-    return adx
-
 def detect_regime(pair='BTC/USD'):
-    """EMA50 slope (direction) + ADX >= 20 (strength). Returns (regime, adx)."""
+    """BULL unless BTC below EMA20 AND (RSI<40 or 3h drop > 0.5%)"""
     cl = list(candles.get(pair, []))
-    if len(cl) < 60: return 'CHOP', 0
+    if len(cl) < 20: return 'BULL'
     closes = [c['c'] for c in cl]
-    ema50_now = _calc_ema(closes, 50)
-    ema50_prev = _calc_ema(closes[:-5], 50)
-    slope = (ema50_now - ema50_prev) / ema50_prev * 100 if ema50_prev > 0 else 0
-    adx = _calc_adx(cl, 14)
-    if slope > 0.1 and adx >= 20: return 'BULL', adx
-    if slope < -0.1 and adx >= 20: return 'BEAR', adx
-    return 'CHOP', adx
+    ema20 = sum(closes[-20:]) / 20
+    px = closes[-1]
+    # RSI
+    deltas = [closes[i] - closes[i-1] for i in range(-14, 0)]
+    gains = [d for d in deltas if d > 0]
+    losses = [-d for d in deltas if d < 0]
+    avg_g = sum(gains) / 14 if gains else 0.001
+    avg_l = sum(losses) / 14 if losses else 0.001
+    rsi = 100 - 100 / (1 + avg_g / avg_l)
+    # 3h change
+    chg3 = (closes[-1] - closes[-4]) / closes[-4] * 100 if len(closes) >= 4 else 0
+    if px < ema20 and (rsi < 40 or chg3 < -0.5):
+        return 'BEAR'
+    return 'BULL'
 
 
 def detect_patterns(pair):
@@ -507,7 +479,7 @@ def get_dynamic_size(score, regime):
 
 
 def check_exits(td):
-    regime, _ = detect_regime()
+    regime = detect_regime()
     for pair in list(positions.keys()):
         pos = positions[pair]
         info = td.get(pair, {})
@@ -747,13 +719,14 @@ def scan_chart_patterns(pair):
 
 
 def check_entries(td):
-    regime, adx = detect_regime()
+    regime = detect_regime()
 
-    if regime != 'BULL':
-        return  # bear/chop = sit in cash
-
-    max_pos = MAX_POSITIONS
-    min_score = MIN_PATTERN_SCORE
+    if regime == 'BULL':
+        max_pos = MAX_POSITIONS
+        min_score = MIN_PATTERN_SCORE
+    else:
+        max_pos = 1
+        min_score = 8
 
     if len(positions) >= max_pos:
         return
@@ -971,7 +944,36 @@ def main():
                 bootstrapped += 1
         except: pass
         time.sleep(0.1)
-    log.info(f'Bootstrapped {bootstrapped} coins — ready')
+    log.info(f'Bootstrapped {bootstrapped} coins from Binance')
+
+    # CoinGecko fallback for coins not on Binance
+    COINGECKO_IDS = {
+        'HEMI/USD': 'hemi', 'VIRTUAL/USD': 'virtual-protocol', 'LINEA/USD': 'linea',
+        'STO/USD': 'stakestone', 'PLUME/USD': 'plume', 'ASTER/USD': 'aster-2',
+        'BMT/USD': 'bubblemaps', 'LISTA/USD': 'lista', 'MIRA/USD': 'mira-3',
+        'PENGU/USD': 'pudgy-penguins', 'PUMP/USD': 'pump-fun', 'SOMI/USD': 'somnia',
+        'WLFI/USD': 'world-liberty-financial', 'XPL/USD': 'plasma', 'S/USD': 'sonic-3',
+    }
+    cg_count = 0
+    for pair, cg_id in COINGECKO_IDS.items():
+        if pair in candles: continue
+        try:
+            import urllib.request, json as jn
+            url = f'https://api.coingecko.com/api/v3/coins/{cg_id}/ohlc?vs_currency=usd&days=7'
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = jn.loads(resp.read())
+            if isinstance(data, list) and len(data) > 10:
+                candles[pair] = deque(maxlen=200)
+                for d in data[:-1]:
+                    if isinstance(d, list) and len(d) >= 5:
+                        candles[pair].append({'o':d[1],'h':d[2],'l':d[3],'c':d[4],'v':1.0,'t':d[0]/1000})
+                cg_count += 1
+        except: pass
+        time.sleep(7)
+    if cg_count > 0:
+        log.info(f'Bootstrapped {cg_count} more coins from CoinGecko')
+    log.info(f'Total: {bootstrapped + cg_count} coins ready')
 
     # Orphan detection
     log.info('Checking for orphaned positions...')
@@ -1051,7 +1053,7 @@ def main():
                 wins = sum(1 for t in trade_history if t['pnl'] > 0)
                 n = len(trade_history)
                 wr = wins / n * 100 if n > 0 else 0
-                regime, adx_now = detect_regime()
+                regime = detect_regime()
                 cash = get_cash()
 
                 pos_str = ''
