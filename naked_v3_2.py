@@ -112,16 +112,18 @@ CONFIG = {
 }
 
 
-# V3.2 universe = every non-stable coin Roostoo actually supports (53 coins).
-# Auto-derived from the live SpotWallet response — do NOT add coins that
-# aren't on Roostoo, the orders will just reject.
+# V3.2 universe: 60 HIGH-QUALITY Roostoo pairs (curated from 66 total).
+# Excluded 6 bad pairs:
+#   BMT, EDEN (thin liquidity <$500k/24h → won't fill cleanly)
+#   BIO, EIGEN, LINEA, WIF (spread >30bps → eats into T1 +10% target)
+# Build process: query Roostoo ticker → filter by vol>$500k AND spread<30bps.
 COINS = [
-    "AAVE", "ARB", "ASTER", "AVAX", "AVNT", "BIO", "BMT", "BNB", "BTC", "CAKE",
-    "CFX", "CRV", "DOGE", "DOT", "EDEN", "EIGEN", "ENA", "ETH", "FET", "FIL",
-    "FORM", "HEMI", "ICP", "LINEA", "LINK", "LISTA", "LTC", "MIRA", "NEAR", "ONDO",
-    "OPEN", "PAXG", "PENDLE", "PENGU", "PLUME", "POL", "PUMP", "S", "SEI", "SOL",
-    "SOMI", "STO", "SUI", "TAO", "TRUMP", "TRX", "UNI", "WIF", "WLD", "WLFI",
-    "XLM", "ZEC", "ZEN",
+    "1000CHEEMS", "AAVE", "ADA", "APT", "ARB", "ASTER", "AVAX", "AVNT", "BNB", "BONK",
+    "BTC", "CAKE", "CFX", "CRV", "DOGE", "DOT", "ENA", "ETH", "FET", "FIL",
+    "FLOKI", "FORM", "HBAR", "HEMI", "ICP", "LINK", "LISTA", "LTC", "MIRA", "NEAR",
+    "ONDO", "OPEN", "PAXG", "PENDLE", "PENGU", "PEPE", "PLUME", "POL", "PUMP", "S",
+    "SEI", "SHIB", "SOL", "SOMI", "STO", "SUI", "TAO", "TON", "TRUMP", "TRX",
+    "TUT", "UNI", "VIRTUAL", "WLD", "WLFI", "XLM", "XPL", "XRP", "ZEC", "ZEN",
 ]
 
 STATE_FILE = 'data/naked_v3_2_state.json'
