@@ -294,11 +294,9 @@ class AutoBot:
             return None
 
     def scan_signals(self):
-        log(f"V3.2 scan — position_pct={self.position_pct}, score≥32")
+        log(f"V3.2 scan — {len(COINS)} coins, position_pct={self.position_pct}, score≥32")
         best = None
         for coin in COINS:
-            if coin == 'BTC':
-                continue
             cd = self.state['cooldowns'].get(coin, 0)
             if cd > time.time():
                 continue

@@ -112,12 +112,16 @@ CONFIG = {
 }
 
 
+# V3.2 universe = every non-stable coin Roostoo actually supports (53 coins).
+# Auto-derived from the live SpotWallet response — do NOT add coins that
+# aren't on Roostoo, the orders will just reject.
 COINS = [
-    "BTC","ETH","SOL","BNB","XRP","DOGE","ADA","TON","AVAX","LINK",
-    "DOT","TRX","SHIB","LTC","NEAR","ATOM","ICP","APT","ARB","OP",
-    "SUI","SEI","INJ","TIA","STX","IMX","FIL","HBAR","VET","RUNE",
-    "AAVE","MKR","LDO","CRV","SNX","COMP","UNI","PEPE","WIF","BONK",
-    "FLOKI","ORDI","JTO","PYTH","ENA",
+    "AAVE", "ARB", "ASTER", "AVAX", "AVNT", "BIO", "BMT", "BNB", "BTC", "CAKE",
+    "CFX", "CRV", "DOGE", "DOT", "EDEN", "EIGEN", "ENA", "ETH", "FET", "FIL",
+    "FORM", "HEMI", "ICP", "LINEA", "LINK", "LISTA", "LTC", "MIRA", "NEAR", "ONDO",
+    "OPEN", "PAXG", "PENDLE", "PENGU", "PLUME", "POL", "PUMP", "S", "SEI", "SOL",
+    "SOMI", "STO", "SUI", "TAO", "TRUMP", "TRX", "UNI", "WIF", "WLD", "WLFI",
+    "XLM", "ZEC", "ZEN",
 ]
 
 STATE_FILE = 'data/naked_v3_2_state.json'
@@ -298,12 +302,10 @@ class Bot:
             return None
 
     def scan_signals(self):
-        # V3.2: NO BTC regime gate — trade pure coin signal
-        log("V3.2 scan (no BTC gate) — looking for score ≥ 32")
+        # V3.2: NO BTC regime gate — trade pure coin signal (BTC included)
+        log(f"V3.2 scan ({len(COINS)} coins, no gate) — looking for score ≥ 32")
         best = None
         for coin in COINS:
-            if coin == 'BTC':
-                continue
             cd = self.state['cooldowns'].get(coin, 0)
             if cd > time.time():
                 continue
