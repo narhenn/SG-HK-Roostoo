@@ -144,6 +144,11 @@ def audit_and_isolate():
             if bars:
                 px = bars[-1]['c']
                 usd = qty * px
+                # Ignore dust under $1 — can't be sold (below min order) and
+                # no reason to blacklist from V3.2 just for rounding residue
+                if usd < 1.0:
+                    log(f"   💨 dust: {sym} qty={qty:,.6f} ≈ ${usd:,.2f} (ignored)")
+                    continue
                 orphan_coins[sym] = {'qty': qty, 'usd': usd, 'price': px}
                 log(f"   🪙 orphan: {sym} qty={qty:,.6f} px={px} ≈ ${usd:,.2f}")
             else:
