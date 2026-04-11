@@ -1,0 +1,243 @@
+{
+  "D1": {
+    "nt": {
+      "trades": 52,
+      "wr": 0.36538461538461536,
+      "pf": 0.3745925167547881,
+      "pnl": -29086.540233736363,
+      "dd": 0.9999917605071499,
+      "by_pat": {
+        "MSTAR+HHHL+ENGULF+MOM+vol": 1,
+        "MSTAR+BEAR_REVERT+vol": 3,
+        "MSTAR+ENGULF+CLOSE_MARU+BEAR_REVERT+MOM": 1,
+        "3OUT_UP+CLOSE_MARU+MOM+vol": 1,
+        "HHHL+3WS+MARU+MOM+vol": 2,
+        "HHHL+3OUT_UP+MOM+vol": 3,
+        "MSTAR+ENGULF+BEAR_REVERT+MOM+peak": 1,
+        "HHHL+3OUT_UP+BEAR_REVERT+peak": 1,
+        "HAMMER+HHHL+3OUT_UP": 1,
+        "ENGULF+MARU+MEANREV+vol": 1,
+        "MSTAR+ENGULF+CLOSE_MARU+sup+vol": 1,
+        "MSTAR+ENGULF+sup": 2,
+        "MSTAR+ENGULF+vol": 1,
+        "MSTAR+ENGULF+MEANREV+vol+peak": 1,
+        "MSTAR+BEAR_REVERT+MOM+vol+peak": 1,
+        "HHHL+3WS+INSIDE+vol": 1,
+        "ENGULF+MARU+MEANREV": 1,
+        "HHHL+3WS+INSIDE+MOM+vol": 1,
+        "3OUT_UP+BEAR_REVERT+vol": 1,
+        "HHHL+3WS+CLOSE_MARU+MOM": 1,
+        "HHHL+ENGULF+MARU+MOM+vol+peak": 1,
+        "HHHL+ENGULF+CLOSE_MARU+MOM+peak": 1,
+        "MSTAR+ENGULF+BEAR_REVERT": 1,
+        "MSTAR+ENGULF+sup+peak": 1,
+        "HHHL+ENGULF+BEAR_REVERT+MOM": 1,
+        "HHHL+3OUT_UP+BEAR_REVERT+sup": 1,
+        "3OUT_UP+BEAR_REVERT+MOM+vol": 1,
+        "3OUT_UP+CLOSE_MARU+sup+vol+peak": 1,
+        "ENGULF+CLOSE_MARU+MEANREV+sup+vol+peak": 1,
+        "HHHL+ENGULF+BEAR_REVERT+sup+vol+peak": 1,
+        "HHHL+3OUT_UP+BEAR_REVERT": 1,
+        "MSTAR+INSIDE+sup+vol": 1,
+        "ENGULF+CLOSE_MARU+MEANREV+sup": 1,
+        "HAMMER+3OUT_UP+sup": 1,
+        "MSTAR+HHHL+INSIDE+sup": 1,
+        "HHHL+3WS+MOM+vol+peak": 1,
+        "HHHL+3WS+MOM+sup+vol+peak": 1,
+        "HHHL+3WS+sup+vol+peak": 2,
+        "HHHL+ENGULF+sup+vol+peak": 1,
+        "ENGULF+BEAR_REVERT+MOM+vol": 1,
+        "3WS+CLOSE_MARU+MOM+vol": 1,
+        "HHHL+ENGULF+MARU+MOM+vol": 2,
+        "HHHL+ENGULF+INSIDE+MOM+vol": 1,
+        "HHHL+3WS+INSIDE+MOM": 1
+      },
+      "by_reason": {
+        "TRAIL": 7,
+        "PROFIT_TRAIL": 16,
+        "ATR_STOP": 18,
+        "MAX_TIME": 2,
+        "HARD_STOP": 5,
+        "EOD": 4
+      },
+      "by_reason_pnl": {
+        "TRAIL": 36.08185642380545,
+        "PROFIT_TRAIL": 12738.648257692574,
+        "ATR_STOP": -25735.531660195764,
+        "MAX_TIME": -875.7174409565145,
+        "HARD_STOP": -13250.68423974671,
+        "EOD": -1999.3370069537532
+      }
+    },
+    "v2_default": {
+      "trades": 25,
+      "wr": 0.56,
+      "pf": 0.5474066563055762,
+      "pnl": -118002.70375101619,
+      "dd": 0.2334733851382972,
+      "by_pat": {
+        "ACAPULCO": 8,
+        "ENGULF": 3,
+        "LK": 7,
+        "KT": 1,
+        "RHINO": 1,
+        "BS": 2,
+        "DONCHIAN": 3
+      },
+      "by_reason": {
+        "STOP": 17,
+        "TRAIL": 3,
+        "EOD": 5
+      },
+      "by_reason_pnl": {
+        "STOP": -217674.76262493237,
+        "TRAIL": 45583.07896902821,
+        "EOD": 54088.97990488798
+      }
+    },
+    "v2_safe": {
+      "trades": 25,
+      "wr": 0.56,
+      "pf": 0.8035997500288605,
+      "pnl": -33141.189743334086,
+      "dd": 0.14624135533912258,
+      "by_pat": {
+        "ACAPULCO": 8,
+        "ENGULF": 3,
+        "LK": 7,
+        "KT": 1,
+        "RHINO": 1,
+        "BS": 2,
+        "DONCHIAN": 3
+      },
+      "by_reason": {
+        "STOP": 17,
+        "TRAIL": 3,
+        "EOD": 5
+      },
+      "by_reason_pnl": {
+        "STOP": -124642.28640530807,
+        "TRAIL": 34939.59165833022,
+        "EOD": 56561.50500364375
+      }
+    }
+  },
+  "D2": {
+    "nt": {
+      "trades": 47,
+      "wr": 0.3404255319148936,
+      "pf": 0.25227069950546965,
+      "pnl": -36274.57049230067,
+      "dd": 0.9997464249974916,
+      "by_pat": {
+        "MSTAR+MEANREV+sup+vol": 1,
+        "HHHL+3OUT_UP+MOM+vol": 2,
+        "HHHL+3WS+INSIDE+sup+vol": 1,
+        "HHHL+3WS+INSIDE+MOM": 1,
+        "MSTAR+HHHL+ENGULF+MOM+vol+peak": 1,
+        "MSTAR+BEAR_REVERT+MOM+vol+peak": 2,
+        "HHHL+ENGULF+MOM+vol+peak": 1,
+        "MSTAR+HHHL+ENGULF+MOM+peak": 1,
+        "MSTAR+BEAR_REVERT+vol": 3,
+        "MSTAR+ENGULF+CLOSE_MARU+BEAR_REVERT+MOM": 1,
+        "HHHL+ENGULF+MARU+BEAR_REVERT+MOM+vol": 1,
+        "HHHL+3WS+INSIDE+MOM+vol": 2,
+        "HHHL+3WS+MARU+MOM+vol": 1,
+        "MSTAR+ENGULF+BEAR_REVERT+MOM+peak": 1,
+        "HHHL+3OUT_UP+BEAR_REVERT+peak": 1,
+        "HHHL+3OUT_UP+BEAR_REVERT+MOM+peak": 1,
+        "3OUT_UP+BEAR_REVERT+peak": 1,
+        "ENGULF+MARU+MEANREV+vol": 1,
+        "MSTAR+ENGULF+CLOSE_MARU+sup+vol": 1,
+        "MSTAR+BEAR_REVERT+INSIDE+vol": 1,
+        "MSTAR+MARU+sup": 1,
+        "MSTAR+ENGULF+MEANREV+vol+peak": 1,
+        "HHHL+3OUT_UP+BEAR_REVERT": 2,
+        "HHHL+3WS+INSIDE+vol": 1,
+        "ENGULF+MARU+MEANREV": 1,
+        "3OUT_UP+BEAR_REVERT+vol": 1,
+        "HHHL+3WS+CLOSE_MARU+MOM": 1,
+        "HHHL+ENGULF+MARU+MOM+vol+peak": 1,
+        "HHHL+ENGULF+CLOSE_MARU+MOM+peak": 1,
+        "MSTAR+ENGULF+BEAR_REVERT": 1,
+        "MSTAR+ENGULF+sup+peak": 1,
+        "HHHL+ENGULF+BEAR_REVERT+MOM": 1,
+        "MSTAR+ENGULF+sup": 1,
+        "HHHL+3OUT_UP+BEAR_REVERT+sup": 1,
+        "3OUT_UP+BEAR_REVERT+MOM+vol": 1,
+        "3OUT_UP+CLOSE_MARU+sup+vol+peak": 1,
+        "ENGULF+CLOSE_MARU+MEANREV+sup+vol+peak": 1,
+        "HHHL+ENGULF+BEAR_REVERT+sup+vol+peak": 1,
+        "MSTAR+INSIDE+sup+vol": 1,
+        "ENGULF+CLOSE_MARU+MEANREV+sup": 1,
+        "HAMMER+3OUT_UP+sup": 1
+      },
+      "by_reason": {
+        "ATR_STOP": 17,
+        "HARD_STOP": 6,
+        "PROFIT_TRAIL": 16,
+        "TRAIL": 6,
+        "MAX_TIME": 2
+      },
+      "by_reason_pnl": {
+        "ATR_STOP": -27032.85678198654,
+        "HARD_STOP": -14880.830923066755,
+        "PROFIT_TRAIL": 9821.90619906544,
+        "TRAIL": -3928.577101612415,
+        "MAX_TIME": -254.2118847003984
+      }
+    },
+    "v2_default": {
+      "trades": 24,
+      "wr": 0.5833333333333334,
+      "pf": 0.8574810560409692,
+      "pnl": -33035.44438376446,
+      "dd": 0.17369311305002347,
+      "by_pat": {
+        "ACAPULCO": 9,
+        "BS": 3,
+        "ENGULF": 4,
+        "LK": 5,
+        "KT": 1,
+        "RHINO": 1,
+        "DONCHIAN": 1
+      },
+      "by_reason": {
+        "STOP": 18,
+        "TRAIL": 2,
+        "EOD": 4
+      },
+      "by_reason_pnl": {
+        "STOP": -97186.53572584564,
+        "TRAIL": 56352.12926954221,
+        "EOD": 7798.962072538959
+      }
+    },
+    "v2_safe": {
+      "trades": 24,
+      "wr": 0.5833333333333334,
+      "pf": 0.9845043530149047,
+      "pnl": -2339.0373785081383,
+      "dd": 0.10500396338219628,
+      "by_pat": {
+        "ACAPULCO": 9,
+        "BS": 3,
+        "ENGULF": 4,
+        "LK": 5,
+        "KT": 1,
+        "RHINO": 1,
+        "DONCHIAN": 1
+      },
+      "by_reason": {
+        "STOP": 18,
+        "TRAIL": 2,
+        "EOD": 4
+      },
+      "by_reason_pnl": {
+        "STOP": -48150.53328505174,
+        "TRAIL": 32029.61371762693,
+        "EOD": 13781.882188916668
+      }
+    }
+  }
+}

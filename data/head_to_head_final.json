@@ -1,0 +1,295 @@
+{
+  "D1": {
+    "nt": {
+      "trades": 52,
+      "wr": 0.36538461538461536,
+      "pf": 0.3745925167547881,
+      "pnl": -29086.540233736363,
+      "dd": 0.9999917605071499,
+      "by_pat": {
+        "MSTAR+HHHL+ENGULF+MOM+vol": 1,
+        "MSTAR+BEAR_REVERT+vol": 3,
+        "MSTAR+ENGULF+CLOSE_MARU+BEAR_REVERT+MOM": 1,
+        "3OUT_UP+CLOSE_MARU+MOM+vol": 1,
+        "HHHL+3WS+MARU+MOM+vol": 2,
+        "HHHL+3OUT_UP+MOM+vol": 3,
+        "MSTAR+ENGULF+BEAR_REVERT+MOM+peak": 1,
+        "HHHL+3OUT_UP+BEAR_REVERT+peak": 1,
+        "HAMMER+HHHL+3OUT_UP": 1,
+        "ENGULF+MARU+MEANREV+vol": 1,
+        "MSTAR+ENGULF+CLOSE_MARU+sup+vol": 1,
+        "MSTAR+ENGULF+sup": 2,
+        "MSTAR+ENGULF+vol": 1,
+        "MSTAR+ENGULF+MEANREV+vol+peak": 1,
+        "MSTAR+BEAR_REVERT+MOM+vol+peak": 1,
+        "HHHL+3WS+INSIDE+vol": 1,
+        "ENGULF+MARU+MEANREV": 1,
+        "HHHL+3WS+INSIDE+MOM+vol": 1,
+        "3OUT_UP+BEAR_REVERT+vol": 1,
+        "HHHL+3WS+CLOSE_MARU+MOM": 1,
+        "HHHL+ENGULF+MARU+MOM+vol+peak": 1,
+        "HHHL+ENGULF+CLOSE_MARU+MOM+peak": 1,
+        "MSTAR+ENGULF+BEAR_REVERT": 1,
+        "MSTAR+ENGULF+sup+peak": 1,
+        "HHHL+ENGULF+BEAR_REVERT+MOM": 1,
+        "HHHL+3OUT_UP+BEAR_REVERT+sup": 1,
+        "3OUT_UP+BEAR_REVERT+MOM+vol": 1,
+        "3OUT_UP+CLOSE_MARU+sup+vol+peak": 1,
+        "ENGULF+CLOSE_MARU+MEANREV+sup+vol+peak": 1,
+        "HHHL+ENGULF+BEAR_REVERT+sup+vol+peak": 1,
+        "HHHL+3OUT_UP+BEAR_REVERT": 1,
+        "MSTAR+INSIDE+sup+vol": 1,
+        "ENGULF+CLOSE_MARU+MEANREV+sup": 1,
+        "HAMMER+3OUT_UP+sup": 1,
+        "MSTAR+HHHL+INSIDE+sup": 1,
+        "HHHL+3WS+MOM+vol+peak": 1,
+        "HHHL+3WS+MOM+sup+vol+peak": 1,
+        "HHHL+3WS+sup+vol+peak": 2,
+        "HHHL+ENGULF+sup+vol+peak": 1,
+        "ENGULF+BEAR_REVERT+MOM+vol": 1,
+        "3WS+CLOSE_MARU+MOM+vol": 1,
+        "HHHL+ENGULF+MARU+MOM+vol": 2,
+        "HHHL+ENGULF+INSIDE+MOM+vol": 1,
+        "HHHL+3WS+INSIDE+MOM": 1
+      },
+      "by_reason": {
+        "TRAIL": 7,
+        "PROFIT_TRAIL": 16,
+        "ATR_STOP": 18,
+        "MAX_TIME": 2,
+        "HARD_STOP": 5,
+        "EOD": 4
+      },
+      "by_reason_pnl": {
+        "TRAIL": 36.08185642380545,
+        "PROFIT_TRAIL": 12738.648257692574,
+        "ATR_STOP": -25735.531660195764,
+        "MAX_TIME": -875.7174409565145,
+        "HARD_STOP": -13250.68423974671,
+        "EOD": -1999.3370069537532
+      }
+    },
+    "v2_default": {
+      "trades": 26,
+      "wr": 0.6153846153846154,
+      "pf": 1.1661795195555715,
+      "pnl": 40780.79175075975,
+      "dd": 0.18733440931988868,
+      "by_pat": {
+        "ENGULF": 8,
+        "LK": 6,
+        "KT": 1,
+        "RHINO": 1,
+        "BS": 2,
+        "ACAPULCO": 5,
+        "DONCHIAN": 3
+      },
+      "by_reason": {
+        "STOP": 18,
+        "TRAIL": 3,
+        "EOD": 5
+      },
+      "by_reason_pnl": {
+        "STOP": -139043.46791041814,
+        "TRAIL": 68919.277580466,
+        "EOD": 110904.98208071187
+      }
+    },
+    "v2_safe": {
+      "trades": 26,
+      "wr": 0.6153846153846154,
+      "pf": 1.212172719993136,
+      "pnl": 29845.13607576373,
+      "dd": 0.10756400210134996,
+      "by_pat": {
+        "ENGULF": 8,
+        "LK": 6,
+        "KT": 1,
+        "RHINO": 1,
+        "BS": 2,
+        "ACAPULCO": 5,
+        "DONCHIAN": 3
+      },
+      "by_reason": {
+        "STOP": 18,
+        "TRAIL": 3,
+        "EOD": 5
+      },
+      "by_reason_pnl": {
+        "STOP": -80871.75100118072,
+        "TRAIL": 36688.10165806531,
+        "EOD": 74028.78541887915
+      }
+    },
+    "baseline": {
+      "trades": 26,
+      "wr": 0.6153846153846154,
+      "pf": 1.2590461839188312,
+      "pnl": 20642.777547295005,
+      "dd": 0.06277753291047325,
+      "by_pat": {
+        "ENGULF": 8,
+        "LK": 6,
+        "KT": 1,
+        "RHINO": 1,
+        "BS": 2,
+        "ACAPULCO": 5,
+        "DONCHIAN": 3
+      },
+      "by_reason": {
+        "STOP": 18,
+        "TRAIL": 3,
+        "EOD": 5
+      },
+      "by_reason_pnl": {
+        "STOP": -47296.72681252922,
+        "TRAIL": 18979.911331279207,
+        "EOD": 48959.593028545016
+      }
+    }
+  },
+  "D2": {
+    "nt": {
+      "trades": 47,
+      "wr": 0.3404255319148936,
+      "pf": 0.25227069950546965,
+      "pnl": -36274.57049230067,
+      "dd": 0.9997464249974916,
+      "by_pat": {
+        "MSTAR+MEANREV+sup+vol": 1,
+        "HHHL+3OUT_UP+MOM+vol": 2,
+        "HHHL+3WS+INSIDE+sup+vol": 1,
+        "HHHL+3WS+INSIDE+MOM": 1,
+        "MSTAR+HHHL+ENGULF+MOM+vol+peak": 1,
+        "MSTAR+BEAR_REVERT+MOM+vol+peak": 2,
+        "HHHL+ENGULF+MOM+vol+peak": 1,
+        "MSTAR+HHHL+ENGULF+MOM+peak": 1,
+        "MSTAR+BEAR_REVERT+vol": 3,
+        "MSTAR+ENGULF+CLOSE_MARU+BEAR_REVERT+MOM": 1,
+        "HHHL+ENGULF+MARU+BEAR_REVERT+MOM+vol": 1,
+        "HHHL+3WS+INSIDE+MOM+vol": 2,
+        "HHHL+3WS+MARU+MOM+vol": 1,
+        "MSTAR+ENGULF+BEAR_REVERT+MOM+peak": 1,
+        "HHHL+3OUT_UP+BEAR_REVERT+peak": 1,
+        "HHHL+3OUT_UP+BEAR_REVERT+MOM+peak": 1,
+        "3OUT_UP+BEAR_REVERT+peak": 1,
+        "ENGULF+MARU+MEANREV+vol": 1,
+        "MSTAR+ENGULF+CLOSE_MARU+sup+vol": 1,
+        "MSTAR+BEAR_REVERT+INSIDE+vol": 1,
+        "MSTAR+MARU+sup": 1,
+        "MSTAR+ENGULF+MEANREV+vol+peak": 1,
+        "HHHL+3OUT_UP+BEAR_REVERT": 2,
+        "HHHL+3WS+INSIDE+vol": 1,
+        "ENGULF+MARU+MEANREV": 1,
+        "3OUT_UP+BEAR_REVERT+vol": 1,
+        "HHHL+3WS+CLOSE_MARU+MOM": 1,
+        "HHHL+ENGULF+MARU+MOM+vol+peak": 1,
+        "HHHL+ENGULF+CLOSE_MARU+MOM+peak": 1,
+        "MSTAR+ENGULF+BEAR_REVERT": 1,
+        "MSTAR+ENGULF+sup+peak": 1,
+        "HHHL+ENGULF+BEAR_REVERT+MOM": 1,
+        "MSTAR+ENGULF+sup": 1,
+        "HHHL+3OUT_UP+BEAR_REVERT+sup": 1,
+        "3OUT_UP+BEAR_REVERT+MOM+vol": 1,
+        "3OUT_UP+CLOSE_MARU+sup+vol+peak": 1,
+        "ENGULF+CLOSE_MARU+MEANREV+sup+vol+peak": 1,
+        "HHHL+ENGULF+BEAR_REVERT+sup+vol+peak": 1,
+        "MSTAR+INSIDE+sup+vol": 1,
+        "ENGULF+CLOSE_MARU+MEANREV+sup": 1,
+        "HAMMER+3OUT_UP+sup": 1
+      },
+      "by_reason": {
+        "ATR_STOP": 17,
+        "HARD_STOP": 6,
+        "PROFIT_TRAIL": 16,
+        "TRAIL": 6,
+        "MAX_TIME": 2
+      },
+      "by_reason_pnl": {
+        "ATR_STOP": -27032.85678198654,
+        "HARD_STOP": -14880.830923066755,
+        "PROFIT_TRAIL": 9821.90619906544,
+        "TRAIL": -3928.577101612415,
+        "MAX_TIME": -254.2118847003984
+      }
+    },
+    "v2_default": {
+      "trades": 22,
+      "wr": 0.6363636363636364,
+      "pf": 1.4921892722110994,
+      "pnl": 101006.24167110818,
+      "dd": 0.1094402287894836,
+      "by_pat": {
+        "BS": 3,
+        "ENGULF": 5,
+        "ACAPULCO": 6,
+        "LK": 5,
+        "KT": 1,
+        "RHINO": 1,
+        "DONCHIAN": 1
+      },
+      "by_reason": {
+        "STOP": 16,
+        "TRAIL": 2,
+        "EOD": 4
+      },
+      "by_reason_pnl": {
+        "STOP": 15163.094783196437,
+        "TRAIL": 65878.51366019595,
+        "EOD": 19964.633227715785
+      }
+    },
+    "v2_safe": {
+      "trades": 22,
+      "wr": 0.6363636363636364,
+      "pf": 1.543071967885574,
+      "pnl": 61536.354037975,
+      "dd": 0.05903827563975982,
+      "by_pat": {
+        "BS": 3,
+        "ENGULF": 5,
+        "ACAPULCO": 6,
+        "LK": 5,
+        "KT": 1,
+        "RHINO": 1,
+        "DONCHIAN": 1
+      },
+      "by_reason": {
+        "STOP": 16,
+        "TRAIL": 2,
+        "EOD": 4
+      },
+      "by_reason_pnl": {
+        "STOP": 14100.597285670952,
+        "TRAIL": 32770.917382842614,
+        "EOD": 14664.839369461424
+      }
+    },
+    "baseline": {
+      "trades": 22,
+      "wr": 0.6363636363636364,
+      "pf": 1.5131547658396232,
+      "pnl": 32202.020526324515,
+      "dd": 0.035408887356584554,
+      "by_pat": {
+        "BS": 3,
+        "ENGULF": 5,
+        "ACAPULCO": 6,
+        "LK": 5,
+        "KT": 1,
+        "RHINO": 1,
+        "DONCHIAN": 1
+      },
+      "by_reason": {
+        "STOP": 16,
+        "TRAIL": 2,
+        "EOD": 4
+      },
+      "by_reason_pnl": {
+        "STOP": 3782.6172580397415,
+        "TRAIL": 16259.812031546975,
+        "EOD": 12159.591236737797
+      }
+    }
+  }
+}
