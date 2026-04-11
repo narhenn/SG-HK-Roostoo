@@ -59,6 +59,14 @@ except Exception as e:
 HACKATHON_END_UTC = datetime(2026, 4, 14, 12, 0, 0, tzinfo=timezone.utc)  # 8pm SGT = 12pm UTC
 STOP_NEW_ENTRIES_BEFORE = timedelta(hours=2)  # no new trades in final 2h
 
+# ════════════════════════════════════════
+# Coins managed by OTHER concurrent bots (don't blacklist these in V3.2)
+# V3.2 can still trade them — it tracks its own slice via qty_initial.
+# Roostoo balance check prevents cross-bot overselling; both bots retry on
+# failure every 60s.
+# ════════════════════════════════════════
+MANAGED_BY_OTHER_BOTS = {'PENDLE'}  # pendle_manager.py owns the 37k PENDLE slice
+
 
 def tg(msg):
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
@@ -219,12 +227,20 @@ def isolate_state(audit):
     if backed_up:
         log(f"🗂  Backed up & disabled {len(backed_up)} stale state files")
 
-    # Build fresh V3.2 state with orphan cooldowns
+    # Build fresh V3.2 state with orphan cooldowns.
+    # Coins managed by another bot (MANAGED_BY_OTHER_BOTS) are NOT cooldowned
+    # so V3.2 can independently trade them alongside the other bot.
     cooldown_until = int(time.time()) + 72 * 3600
+    cooldowns = {}
+    for sym in audit['orphan_coins']:
+        if sym in MANAGED_BY_OTHER_BOTS:
+            log(f"   ℹ {sym}: managed by external bot — V3.2 CAN also trade it")
+            continue
+        cooldowns[sym] = cooldown_until
     state = {
         'trades_fired': 0,
         'position': None,
-        'cooldowns': {sym: cooldown_until for sym in audit['orphan_coins']},
+        'cooldowns': cooldowns,
         'trade_log': [],
         'started_at': int(time.time()),
         'audit': {
