@@ -279,12 +279,22 @@ class Bot:
         if not price:
             return None
         qty = usd / (price * (1 + SLIPPAGE) * (1 + TAKER_FEE))
+        pair = f"{coin}/USD"
         if self.dry:
-            log(f"DRY BUY {coin} qty={qty:.6f} px={price}")
+            log(f"DRY BUY {pair} qty={qty:.6f} px={price}")
             return {'price': price, 'qty': qty}
         try:
-            r = self.client.place_market_order(coin, 'BUY', qty)
-            return {'price': float(r.get('price', price)), 'qty': float(r.get('qty', qty))}
+            r = self.client.place_order(pair, 'BUY', 'MARKET', qty)
+            if not r.get('Success', False):
+                log(f"buy REJECTED: {r.get('ErrMsg', 'unknown')} pair={pair}")
+                return None
+            fill_px = float(r.get('FilledAverPrice', 0))
+            fill_qty = float(r.get('FilledQuantity', 0))
+            if fill_px <= 0 or fill_qty <= 0:
+                log(f"buy EMPTY FILL: px={fill_px} qty={fill_qty}")
+                return None
+            log(f"buy FILLED: {pair} qty={fill_qty:,.2f} @ ${fill_px:.6f}")
+            return {'price': fill_px, 'qty': fill_qty}
         except Exception as e:
             log(f"buy err: {e}")
             return None
@@ -293,12 +303,22 @@ class Bot:
         price = self.get_price(coin)
         if not price:
             return None
+        pair = f"{coin}/USD"
         if self.dry:
-            log(f"DRY SELL {coin} qty={qty:.6f} px={price}")
+            log(f"DRY SELL {pair} qty={qty:.6f} px={price}")
             return {'price': price, 'qty': qty}
         try:
-            r = self.client.place_market_order(coin, 'SELL', qty)
-            return {'price': float(r.get('price', price)), 'qty': float(r.get('qty', qty))}
+            r = self.client.place_order(pair, 'SELL', 'MARKET', qty)
+            if not r.get('Success', False):
+                log(f"sell REJECTED: {r.get('ErrMsg', 'unknown')} pair={pair}")
+                return None
+            fill_px = float(r.get('FilledAverPrice', 0))
+            fill_qty = float(r.get('FilledQuantity', 0))
+            if fill_px <= 0 or fill_qty <= 0:
+                log(f"sell EMPTY FILL: px={fill_px} qty={fill_qty}")
+                return None
+            log(f"sell FILLED: {pair} qty={fill_qty:,.2f} @ ${fill_px:.6f}")
+            return {'price': fill_px, 'qty': fill_qty}
         except Exception as e:
             log(f"sell err: {e}")
             return None

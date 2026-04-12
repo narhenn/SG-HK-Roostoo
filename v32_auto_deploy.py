@@ -281,9 +281,24 @@ class AutoBot:
         return now >= HACKATHON_END_UTC
 
     def get_equity(self):
+        """Compute total equity from SpotWallet (cash + coin values)."""
         try:
             bal = self.client.get_balance()
-            return float(bal.get('total_usd', STARTING_CAPITAL))
+            wallet = bal.get('SpotWallet', {})
+            total = 0.0
+            for sym, info in wallet.items():
+                if not isinstance(info, dict):
+                    continue
+                qty = float(info.get('Free', 0)) + float(info.get('Lock', 0))
+                if qty <= 0:
+                    continue
+                if sym in ('USD', 'USDT', 'USDC', 'USD1', 'DAI'):
+                    total += qty
+                else:
+                    bars = binance_klines(sym, '1m', 1)
+                    if bars:
+                        total += qty * bars[-1]['c']
+            return total if total > 1000 else STARTING_CAPITAL
         except Exception:
             return STARTING_CAPITAL
 
@@ -296,9 +311,19 @@ class AutoBot:
         if not price:
             return None
         qty = usd / (price * (1 + SLIPPAGE) * (1 + TAKER_FEE))
+        pair = f"{coin}/USD"
         try:
-            r = self.client.place_order(coin, 'BUY', 'MARKET', qty)
-            return {'price': float(r.get('price', price)), 'qty': float(r.get('qty', qty))}
+            r = self.client.place_order(pair, 'BUY', 'MARKET', qty)
+            if not r.get('Success', False):
+                log(f"buy REJECTED: {r.get('ErrMsg', 'unknown')} pair={pair}")
+                return None
+            fill_px = float(r.get('FilledAverPrice', 0))
+            fill_qty = float(r.get('FilledQuantity', 0))
+            if fill_px <= 0 or fill_qty <= 0:
+                log(f"buy EMPTY FILL: px={fill_px} qty={fill_qty}")
+                return None
+            log(f"buy FILLED: {pair} qty={fill_qty:,.2f} @ ${fill_px:.6f}")
+            return {'price': fill_px, 'qty': fill_qty}
         except Exception as e:
             log(f"buy err: {e}")
             return None
@@ -307,9 +332,19 @@ class AutoBot:
         price = self.get_price(coin)
         if not price:
             return None
+        pair = f"{coin}/USD"
         try:
-            r = self.client.place_order(coin, 'SELL', 'MARKET', qty)
-            return {'price': float(r.get('price', price)), 'qty': float(r.get('qty', qty))}
+            r = self.client.place_order(pair, 'SELL', 'MARKET', qty)
+            if not r.get('Success', False):
+                log(f"sell REJECTED: {r.get('ErrMsg', 'unknown')} pair={pair}")
+                return None
+            fill_px = float(r.get('FilledAverPrice', 0))
+            fill_qty = float(r.get('FilledQuantity', 0))
+            if fill_px <= 0 or fill_qty <= 0:
+                log(f"sell EMPTY FILL: px={fill_px} qty={fill_qty}")
+                return None
+            log(f"sell FILLED: {pair} qty={fill_qty:,.2f} @ ${fill_px:.6f}")
+            return {'price': fill_px, 'qty': fill_qty}
         except Exception as e:
             log(f"sell err: {e}")
             return None
