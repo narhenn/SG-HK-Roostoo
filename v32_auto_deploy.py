@@ -292,7 +292,7 @@ class AutoBot:
                 qty = float(info.get('Free', 0)) + float(info.get('Lock', 0))
                 if qty <= 0:
                     continue
-                if sym in ('USD', 'USDT', 'USDC', 'USD1', 'DAI'):
+                if sym in ('USD', 'USDT', 'USDC', 'USD1', 'DAI', 'FDUSD', 'TUSD', 'BUSD'):
                     total += qty
                 else:
                     bars = binance_klines(sym, '1m', 1)

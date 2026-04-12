@@ -81,8 +81,10 @@ def load_state():
 
 def save_state(state):
     os.makedirs(os.path.dirname(STATE_FILE), exist_ok=True)
-    with open(STATE_FILE, 'w') as fp:
+    tmp = STATE_FILE + '.tmp'
+    with open(tmp, 'w') as fp:
         json.dump(state, fp, indent=2, default=str)
+    os.replace(tmp, STATE_FILE)
 
 
 def get_pendle_qty(client):
@@ -199,7 +201,7 @@ def main():
             if not closed and not state['t1_done']:
                 t1p = state['entry_ref'] * (1 + T1_PCT)
                 if px >= t1p:
-                    sell_qty = state['qty_initial'] * T1_SIZE
+                    sell_qty = min(state['qty_initial'] * T1_SIZE, state['qty_remaining'])
                     r = sell_pendle(client, sell_qty)
                     if r['ok']:
                         state['closes'].append({
@@ -216,7 +218,7 @@ def main():
             if not closed and state['t1_done'] and not state['t2_done']:
                 t2p = state['entry_ref'] * (1 + T2_PCT)
                 if px >= t2p:
-                    sell_qty = state['qty_initial'] * T2_SIZE
+                    sell_qty = min(state['qty_initial'] * T2_SIZE, state['qty_remaining'])
                     r = sell_pendle(client, sell_qty)
                     if r['ok']:
                         state['closes'].append({
@@ -239,7 +241,7 @@ def main():
                 reason = 'TRAIL'
                 exit_px = state['stop']
 
-            if closed and state['qty_remaining'] > 0:
+            if closed and state['qty_remaining'] > 1e-6:
                 r = sell_pendle(client, state['qty_remaining'])
                 if r['ok']:
                     state['closes'].append({

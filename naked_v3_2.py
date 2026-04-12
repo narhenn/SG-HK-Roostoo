@@ -263,7 +263,21 @@ class Bot:
             return STARTING_CAPITAL
         try:
             bal = self.client.get_balance()
-            return float(bal.get('total_usd', STARTING_CAPITAL))
+            wallet = bal.get('SpotWallet', {})
+            total = 0.0
+            for sym, info in wallet.items():
+                if not isinstance(info, dict):
+                    continue
+                qty = float(info.get('Free', 0)) + float(info.get('Lock', 0))
+                if qty <= 0:
+                    continue
+                if sym in ('USD', 'USDT', 'USDC', 'USD1', 'DAI', 'FDUSD', 'TUSD', 'BUSD'):
+                    total += qty
+                else:
+                    bars = binance_klines(sym, '1m', 1)
+                    if bars:
+                        total += qty * bars[-1]['c']
+            return total if total > 1000 else STARTING_CAPITAL
         except Exception as e:
             log(f"balance err: {e}")
             return STARTING_CAPITAL
