@@ -67,6 +67,31 @@ STOP_NEW_ENTRIES_BEFORE = timedelta(hours=2)  # no new trades in final 2h
 # ════════════════════════════════════════
 MANAGED_BY_OTHER_BOTS = {'PENDLE'}  # pendle_manager.py owns the 37k PENDLE slice
 
+# ════════════════════════════════════════
+# Roostoo precision cache — fetched once at startup, used to round order qty
+# ════════════════════════════════════════
+PRECISION_CACHE = {}  # {coin: amount_precision}
+
+def load_precision_cache():
+    """Fetch AmountPrecision for every pair from Roostoo exchange_info."""
+    global PRECISION_CACHE
+    try:
+        client = RoostooClient()
+        info = client.get_exchange_info()
+        for pair, data in info.get('TradePairs', {}).items():
+            coin = data.get('Coin', '')
+            PRECISION_CACHE[coin] = int(data.get('AmountPrecision', 2))
+        log(f"precision cache loaded: {len(PRECISION_CACHE)} coins")
+    except Exception as e:
+        log(f"precision cache failed: {e} — using default 2 decimals")
+
+def round_qty(coin, qty):
+    """Round order quantity to Roostoo's required precision for this coin."""
+    decimals = PRECISION_CACHE.get(coin, 2)
+    if decimals == 0:
+        return int(qty)
+    return round(qty, decimals)
+
 
 def tg(msg):
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
@@ -310,7 +335,7 @@ class AutoBot:
         price = self.get_price(coin)
         if not price:
             return None
-        qty = usd / (price * (1 + SLIPPAGE) * (1 + TAKER_FEE))
+        qty = round_qty(coin, usd / (price * (1 + SLIPPAGE) * (1 + TAKER_FEE)))
         pair = f"{coin}/USD"
         try:
             r = self.client.place_order(pair, 'BUY', 'MARKET', qty)
@@ -332,6 +357,7 @@ class AutoBot:
         price = self.get_price(coin)
         if not price:
             return None
+        qty = round_qty(coin, qty)
         pair = f"{coin}/USD"
         try:
             r = self.client.place_order(pair, 'SELL', 'MARKET', qty)
@@ -510,10 +536,11 @@ class AutoBot:
         coin, score, entry = best
         usd = equity * self.position_pct
         log(f"🎯 FIRING: {coin} score={score:.1f} usd=${usd:,.0f}")
-        tg(f"🎯 V3.2 SIGNAL {coin} score={score:.1f}\nentry={entry} size=${usd:,.0f}")
+        # NOTE: Telegram alert moved to AFTER successful fill to prevent spam on rejected orders
 
         fill = self.place_buy(coin, usd)
         if not fill:
+            log(f"buy failed for {coin} — will retry next scan if signal persists")
             return
 
         self.state['position'] = {
@@ -571,6 +598,8 @@ def main():
     ap.add_argument('--dry-audit', action='store_true',
                     help='run audit only, do not start bot')
     args = ap.parse_args()
+
+    load_precision_cache()
 
     audit = audit_and_isolate()
     if not audit:
